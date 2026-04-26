@@ -21,6 +21,7 @@ class BookFSM(StatesGroup):
 
 @router.message(F.text == "/start")
 async def cmd_start(m: Message, state: FSMContext):
+    await state.clear() # Очищаем старые сессии
     user = await get_user(m.from_user.id)
     if user and user.phone:
         await state.update_data(phone=user.phone)
@@ -39,7 +40,7 @@ async def start_booking(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer("📞 Введите номер телефона:")
     await cb.answer()
 
-# 🛠 УНИВЕРСАЛЬНАЯ ФУНКЦИЯ: работает и для Message, и для CallbackQuery
+# 🛠 УНИВЕРСАЛЬНАЯ ФУНКЦИЯ
 async def _show_dates(event, state: FSMContext, is_callback: bool = False):
     async with async_session() as s:
         res = await s.execute(select(Slot.date).where(Slot.is_active, ~Slot.is_booked).distinct())
@@ -80,7 +81,9 @@ async def save_phone(m: Message, state: FSMContext):
 async def select_date(cb: CallbackQuery, state: FSMContext):
     await state.update_data(date=cb.data.split(":")[1])
     async with async_session() as s:
-        res = await s.execute(select(Slot.start_time).where(Slot.date == (await state.get_data())["date"], Slot.is_active, ~Slot.is_booked))
+        # Берем дату из состояния
+        data = await state.get_data()
+        res = await s.execute(select(Slot.start_time).where(Slot.date == data["date"], Slot.is_active, ~Slot.is_booked))
         times = [r[0] for r in res]
     await state.set_state(BookFSM.time)
     await cb.message.answer("⏰ Выберите время:", reply_markup=times_kb(times))
@@ -116,17 +119,39 @@ async def manage_services(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "book_confirm")
 async def confirm_booking(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
+    
+    # 🛡️ ЗАЩИТА: Проверка наличия данных (если бот перезагрузился в процессе)
+    if not data.get("date") or not data.get("time") or not data.get("phone"):
+        await cb.message.answer("⏳ Сессия бронирования истекла. Пожалуйста, начните заново.")
+        await state.clear()
+        return
+
     async with async_session() as s:
-        res = await s.execute(select(Slot).where(Slot.date == data["date"], Slot.start_time == data["time"], ~Slot.is_booked, Slot.is_active))
+        # Ищем слот
+        res = await s.execute(select(Slot).where(
+            Slot.date == data["date"], 
+            Slot.start_time == data["time"], 
+            ~Slot.is_booked, 
+            Slot.is_active
+        ))
         slot = res.scalar_one_or_none()
+        
         if not slot:
-            await cb.message.answer("❌ Слот только что забронировали. Выберите другое время.")
+            await cb.message.answer("❌ Этот слот только что забронировали. Выберите другое время.")
             await state.clear()
             return
+            
+        # Бронируем слот
         slot.is_booked = True
         total = sum(x["price"] for x in data.get("selected_services", []))
-        s.add(Booking(user_tg_id=cb.from_user.id, slot_id=slot.id, services=json.dumps([x["id"] for x in data.get("selected_services", [])]), total_price=total))
+        s.add(Booking(
+            user_tg_id=cb.from_user.id, 
+            slot_id=slot.id, 
+            services=json.dumps([x["id"] for x in data.get("selected_services", [])]), 
+            total_price=total
+        ))
         await s.commit()
+        
     await cb.message.answer("✅ Бронь создана! За 2 часа пришлём напоминание.")
     await state.clear()
     await cb.answer()
