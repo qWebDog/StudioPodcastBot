@@ -9,7 +9,7 @@ from aiogram.types import Message, CallbackQuery
 from sqlalchemy import select, func
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database import async_session, User, Slot, Service, Booking, get_user, get_booking_details
-from keyboards import admin_kb, slot_list_kb, slot_action_kb, booking_action_kb
+from keyboards import parse_admin_date, format_date_display, admin_kb, slot_list_kb, slot_action_kb, booking_action_kb
 from config import ADMIN_IDS
 
 
@@ -43,12 +43,17 @@ async def cmd_admin(m: Message):
 @router.callback_query(F.data == "admin_add_slot", F.from_user.id.in_(ADMIN_IDS))
 async def admin_add_slot(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AdminFSM.slot_date)
-    await cb.message.answer("📅 Дата (ГГГГ-ММ-ДД):")
+    await cb.message.answer("📅 Введите дату (ДД-ММ, например 15-05):")
     await cb.answer()
 
 @router.message(AdminFSM.slot_date, F.from_user.id.in_(ADMIN_IDS))
 async def proc_slot_date(m: Message, state: FSMContext):
-    await state.update_data(date=m.text.strip())
+    try:
+        date_iso = parse_admin_date(m.text.strip())
+    except ValueError:
+        return await m.answer("❌ Ошибка. Введите дату в формате ДД-ММ (например 20-05):")
+        
+    await state.update_data(date=date_iso)
     await state.set_state(AdminFSM.slot_start)
     await m.answer("⏰ Начало рабочего дня (например, 10:00):")
 
