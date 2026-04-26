@@ -27,7 +27,7 @@ class Slot(Base):
     date = Column(String, nullable=False)
     start_time = Column(String, nullable=False)
     end_time = Column(String, nullable=False)
-    price = Column(Float, default=0.0)  # 🆕 Цена за слот
+    price = Column(Float, default=0.0)
     is_booked = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
 
@@ -35,7 +35,7 @@ class Booking(Base):
     __tablename__ = "bookings"
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_tg_id = Column(Integer, nullable=False)
-    slot_id = Column(Integer, nullable=False)
+    slot_ids = Column(String, nullable=False)  # 🆕 JSON список ID часов
     services = Column(String, nullable=True)
     total_price = Column(Float, default=0.0)
     status = Column(String, default="confirmed")
@@ -61,7 +61,11 @@ def validate_phone(phone: str) -> bool:
 async def get_booking_details(booking_id: int):
     async with async_session() as s:
         b = await s.get(Booking, booking_id)
-        if not b: return None, None, None
-        slot = await s.get(Slot, b.slot_id)
+        if not b: return None, [], None
+        slot_ids = json.loads(b.slot_ids)
+        slots = []
+        for sid in slot_ids:
+            sl = await s.get(Slot, sid)
+            if sl: slots.append(sl)
         user = await get_user(b.user_tg_id)
-        return b, slot, user
+        return b, slots, user
