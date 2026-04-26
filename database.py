@@ -1,0 +1,68 @@
+import json
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, func, select
+import re
+
+Base = DeclarativeBase()
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tg_id = Column(Integer, unique=True, nullable=False)
+    username = Column(String)
+    phone = Column(String)
+    created_at = Column(DateTime, server_default=func.now())
+
+class Service(Base):
+    __tablename__ = "services"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    price = Column(Float, default=0.0)
+    is_active = Column(Boolean, default=True)
+
+class Slot(Base):
+    __tablename__ = "slots"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(String, nullable=False)  # YYYY-MM-DD
+    start_time = Column(String, nullable=False)
+    end_time = Column(String, nullable=False)
+    is_booked = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+
+class Booking(Base):
+    __tablename__ = "bookings"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_tg_id = Column(Integer, nullable=False)
+    slot_id = Column(Integer, nullable=False)
+    services = Column(String, nullable=True)
+    total_price = Column(Float, default=0.0)
+    status = Column(String, default="confirmed")
+    reminder_sent = Column(Boolean, default=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+DB_URL = "sqlite+aiosqlite:///./studio.db"
+engine = create_async_engine(DB_URL, echo=False)
+async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+async def get_user(tg_id: int) -> User | None:
+    async with async_session() as s:
+        return (await s.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
+
+def validate_phone(phone: str) -> bool:
+    # Разрешаем цифры, +, -, пробелы, скобки. Минимум 7 цифр.
+    digits = re.sub(r'\D', '', phone)
+    return len(digits) >= 7 and len(digits) <= 15
+
+async def get_booking_details(booking_id: int):
+    """Возвращает кортеж: (Booking, Slot, User)"""
+    async with async_session() as s:
+        b = await s.get(Booking, booking_id)
+        if not b: return None, None, None
+        slot = await s.get(Slot, b.slot_id)
+        user = await get_user(b.user_tg_id)
+        return b, slot, user
