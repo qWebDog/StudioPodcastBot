@@ -1,10 +1,11 @@
 import json
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, func, select
 import re
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.orm import declarative_base
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, func, select
 
-Base = DeclarativeBase()
+# ✅ ПРАВИЛЬНОЕ ОБЪЯВЛЕНИЕ БАЗЫ
+Base = declarative_base()
 
 class User(Base):
     __tablename__ = "users"
@@ -54,9 +55,8 @@ async def get_user(tg_id: int) -> User | None:
         return (await s.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
 
 def validate_phone(phone: str) -> bool:
-    # Разрешаем цифры, +, -, пробелы, скобки. Минимум 7 цифр.
     digits = re.sub(r'\D', '', phone)
-    return len(digits) >= 7 and len(digits) <= 15
+    return 7 <= len(digits) <= 15
 
 async def get_booking_details(booking_id: int):
     """Возвращает кортеж: (Booking, Slot, User)"""
