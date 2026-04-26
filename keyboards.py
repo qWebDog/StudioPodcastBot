@@ -23,9 +23,15 @@ def admin_kb() -> InlineKeyboardMarkup:
 
 def dates_kb(dates: list[str]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for d in sorted(dates): 
-        kb.button(text=d, callback_data=f"book_date:{d}")
-    kb.adjust(1)  # ✅ Принудительно 1 кнопка на строку
+    for d in sorted(dates):
+        # Форматируем: 2024-05-15 (Ср)
+        dt = datetime.strptime(d, "%Y-%m-%d")
+        day_name = dt.strftime("%A")  # Понедельник, Вторник...
+        # Сокращаем до 3 букв на русском
+        ru_days = {"Monday": "Пн", "Tuesday": "Вт", "Wednesday": "Ср", "Thursday": "Чт", "Friday": "Пт", "Saturday": "Сб", "Sunday": "Вс"}
+        display = f"{d} ({ru_days.get(day_name, day_name[:2])})"
+        kb.button(text=display, callback_data=f"book_date:{d}")
+    kb.adjust(1)  # ✅ 1 кнопка на строку
     return kb.as_markup()
 
 def multi_slots_kb(slots: list, selected_ids: list[int]) -> InlineKeyboardMarkup:
