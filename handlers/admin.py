@@ -4,10 +4,11 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
 from sqlalchemy import select
-from database import async_session, User, Slot, Service, get_user
-from keyboards import admin_kb, slot_list_kb, slot_action_kb
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from database import async_session, User, Slot, Service, Booking, get_user, get_booking_details
+from keyboards import admin_kb, slot_list_kb, slot_action_kb, booking_action_kb
 from config import ADMIN_IDS
 
 router = Router()
@@ -22,6 +23,8 @@ class AdminFSM(StatesGroup):
     move_date = State()
     move_start = State()
     move_end = State()
+    filter_date = State()
+    search_phone = State()
 
 @router.message(Command("admin"))
 async def cmd_admin(m: Message):
@@ -55,7 +58,6 @@ async def proc_slot_end(m: Message, state: FSMContext):
     await m.answer(f"✅ Слот добавлен: {d['date']} {d['start']}-{d['end']}")
     await state.clear()
 
-# --- Управление слотами ---
 @router.callback_query(F.data == "admin_slots_list", F.from_user.id.in_(ADMIN_IDS))
 async def list_slots(cb: CallbackQuery, state: FSMContext):
     async with async_session() as s:
@@ -133,35 +135,53 @@ async def proc_move_end(m: Message, state: FSMContext):
     await m.answer(f"✅ Слот перенесён: {slot.date} {slot.start_time}-{slot.end_time}")
     await state.clear()
 
-# --- Услуги и рассылка (без изменений) ---
 @router.callback_query(F.data == "admin_services", F.from_user.id.in_(ADMIN_IDS))
 async def admin_svc(cb: CallbackQuery, state: FSMContext):
-    await state.set_state(AdminFSM.svc_name); await cb.message.answer("💼 Название услуги:"); await cb.answer()
+    await state.set_state(AdminFSM.svc_name)
+    await cb.message.answer("💼 Название услуги:")
+    await cb.answer()
 
 @router.message(AdminFSM.svc_name, F.from_user.id.in_(ADMIN_IDS))
 async def proc_svc_name(m: Message, state: FSMContext):
-    await state.update_data(name=m.text.strip()); await state.set_state(AdminFSM.svc_price); await m.answer("💵 Цена:")
+    await state.update_data(name=m.text.strip())
+    await state.set_state(AdminFSM.svc_price)
+    await m.answer("💵 Цена:")
 
 @router.message(AdminFSM.svc_price, F.from_user.id.in_(ADMIN_IDS))
 async def proc_svc_price(m: Message, state: FSMContext):
-    try: price = float(m.text.replace(",", "."))
-    except: await m.answer("❌"); return
-    d = await state.get_data(); async with async_session() as s: s.add(Service(name=d["name"], price=price)); await s.commit()
-    await m.answer(f"✅ Услуга добавлена"); await state.clear()
+    try:
+        price = float(m.text.replace(",", "."))
+    except:
+        await m.answer("❌ Некорректная цена.")
+        return
+    d = await state.get_data()
+    async with async_session() as s:
+        s.add(Service(name=d["name"], price=price))
+        await s.commit()
+    await m.answer(f"✅ Услуга добавлена: {d['name']} — {int(price)}₽")
+    await state.clear()
 
 @router.callback_query(F.data == "admin_broadcast", F.from_user.id.in_(ADMIN_IDS))
 async def admin_broadcast(cb: CallbackQuery, state: FSMContext):
-    await state.set_state(AdminFSM.broadcast); await cb.message.answer("📤 Текст рассылки:"); await cb.answer()
+    await state.set_state(AdminFSM.broadcast)
+    await cb.message.answer("📤 Текст рассылки:")
+    await cb.answer()
 
 @router.message(AdminFSM.broadcast, F.from_user.id.in_(ADMIN_IDS))
 async def proc_broadcast(m: Message, state: FSMContext):
-    await m.answer("🔄 Отправка..."); async with async_session() as s: ids = (await s.execute(select(User.tg_id))).scalars().all()
+    await m.answer("🔄 Отправка...")
+    async with async_session() as s:
+        ids = (await s.execute(select(User.tg_id))).scalars().all()
     ok = 0
     for uid in ids:
-        try: await m.bot.send_message(uid, m.text); ok += 1
-        except: pass
+        try:
+            await m.bot.send_message(uid, m.text)
+            ok += 1
+        except:
+            pass
         await asyncio.sleep(0.3)
-    await m.answer(f"✅ Готово. Доставлено: {ok}"); await state.clear()
+    await m.answer(f"✅ Готово. Доставлено: {ok}")
+    await state.clear()
 
 @router.callback_query(F.data == "admin_bookings_list", F.from_user.id.in_(ADMIN_IDS))
 async def list_bookings(cb: CallbackQuery):
@@ -183,7 +203,6 @@ async def list_bookings(cb: CallbackQuery):
     await cb.message.answer(msg, parse_mode="Markdown", reply_markup=kb.as_markup())
     await cb.answer()
 
-
 @router.callback_query(F.data.startswith("adm_manage:"), F.from_user.id.in_(ADMIN_IDS))
 async def adm_manage(cb: CallbackQuery):
     bid = int(cb.data.split(":")[1])
@@ -198,7 +217,6 @@ async def adm_manage(cb: CallbackQuery):
     await cb.message.edit_text(txt, parse_mode="Markdown", reply_markup=booking_action_kb(b.id, b.status))
     await cb.answer()
 
-
 @router.callback_query(F.data.startswith("adm_cancel:"), F.from_user.id.in_(ADMIN_IDS))
 async def adm_cancel(cb: CallbackQuery):
     bid = int(cb.data.split(":")[1])
@@ -211,15 +229,11 @@ async def adm_cancel(cb: CallbackQuery):
         await s.commit()
 
     user = await get_user(b.user_tg_id)
-    try:
-        await cb.bot.send_message(b.user_tg_id, f"❌ Администратор отменил вашу бронь #{bid}. Свяжитесь для переноса.")
-    except:
-        pass
+    try: await cb.bot.send_message(b.user_tg_id, f"❌ Администратор отменил вашу бронь #{bid}. Свяжитесь для переноса.")
+    except: pass
 
-    await cb.message.edit_text(f"❌ Бронь #{bid} отменена.", reply_markup=InlineKeyboardBuilder().button(text="🔙 Назад",
-                                                                                                        callback_data="admin_bookings_list").as_markup())
+    await cb.message.edit_text(f"❌ Бронь #{bid} отменена.", reply_markup=InlineKeyboardBuilder().button(text="🔙 Назад", callback_data="admin_bookings_list").as_markup())
     await cb.answer("Успешно")
-
 
 @router.callback_query(F.data.startswith("adm_confirm:"), F.from_user.id.in_(ADMIN_IDS))
 async def adm_confirm(cb: CallbackQuery):
@@ -230,18 +244,13 @@ async def adm_confirm(cb: CallbackQuery):
         b.status = "confirmed"
         await s.commit()
     await cb.answer("✅ Подтверждено")
-    await cb.message.edit_text(f"✅ Бронь #{bid} подтверждена.",
-                               reply_markup=InlineKeyboardBuilder().button(text="🔙 Назад",
-                                                                           callback_data="admin_bookings_list").as_markup())
+    await cb.message.edit_text(f"✅ Бронь #{bid} подтверждена.", reply_markup=InlineKeyboardBuilder().button(text="🔙 Назад", callback_data="admin_bookings_list").as_markup())
 
-
-# --- НОВЫЕ ФИЛЬТРЫ И ПОИСК ---
 @router.callback_query(F.data == "adm_filter_date", F.from_user.id.in_(ADMIN_IDS))
 async def start_date_filter(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AdminFSM.filter_date)
     await cb.message.answer("📅 Введите дату для поиска (ГГГГ-ММ-ДД):")
     await cb.answer()
-
 
 @router.message(AdminFSM.filter_date, F.from_user.id.in_(ADMIN_IDS))
 async def process_date_filter(m: Message, state: FSMContext):
@@ -254,9 +263,9 @@ async def process_date_filter(m: Message, state: FSMContext):
     async with async_session() as s:
         stmt = (
             select(Booking, Slot.start_time, Slot.end_time, Slot.date)
-                .join(Slot, Booking.slot_id == Slot.id)
-                .where(Slot.date == date)
-                .order_by(Booking.created_at.desc())
+            .join(Slot, Booking.slot_id == Slot.id)
+            .where(Slot.date == date)
+            .order_by(Booking.created_at.desc())
         )
         rows = (await s.execute(stmt)).all()
 
@@ -280,13 +289,11 @@ async def process_date_filter(m: Message, state: FSMContext):
     await m.answer(msg, parse_mode="Markdown", reply_markup=kb.as_markup())
     await state.clear()
 
-
 @router.callback_query(F.data == "adm_search_phone", F.from_user.id.in_(ADMIN_IDS))
 async def start_phone_search(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AdminFSM.search_phone)
     await cb.message.answer("📱 Введите номер телефона (полный или часть):")
     await cb.answer()
-
 
 @router.message(AdminFSM.search_phone, F.from_user.id.in_(ADMIN_IDS))
 async def process_phone_search(m: Message, state: FSMContext):
@@ -295,7 +302,6 @@ async def process_phone_search(m: Message, state: FSMContext):
         return await m.answer("❌ Введите минимум 3 цифры для поиска.")
 
     async with async_session() as s:
-        # Ищем пользователей по номеру
         user_stmt = select(User).where(User.phone.isnot(None), User.phone.like(f"%{phone_query}%"))
         users = (await s.execute(user_stmt)).scalars().all()
 
@@ -307,7 +313,6 @@ async def process_phone_search(m: Message, state: FSMContext):
             )
 
         user_ids = [u.tg_id for u in users]
-        # Ищем брони этих пользователей
         b_stmt = select(Booking).where(Booking.user_tg_id.in_(user_ids)).order_by(Booking.created_at.desc()).limit(30)
         bookings = (await s.execute(b_stmt)).scalars().all()
 
@@ -325,7 +330,6 @@ async def process_phone_search(m: Message, state: FSMContext):
     await m.answer(msg, parse_mode="Markdown", reply_markup=kb.as_markup())
     await state.clear()
 
-# Кнопка возврата в главное меню админки
 @router.callback_query(F.data == "admin_menu")
 async def go_back_to_admin(cb: CallbackQuery):
     await cb.message.answer("👑 Панель администратора:", reply_markup=admin_kb())
