@@ -1,5 +1,29 @@
+from datetime import datetime
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+RU_DAYS = {"Monday": "Пн", "Tuesday": "Вт", "Wednesday": "Ср", "Thursday": "Чт", "Friday": "Пт", "Saturday": "Сб", "Sunday": "Вс"}
+
+def format_date_display(date_str: str) -> str:
+    """YYYY-MM-DD -> DD.MM ДД (например: 15.05 Пт)"""
+    dt = datetime.strptime(date_str, "%Y-%m-%d")
+    ru_day = RU_DAYS.get(dt.strftime("%A"), dt.strftime("%A")[:2])
+    return f"{dt.day:02d}.{dt.month:02d} {ru_day}"
+
+def parse_admin_date(date_input: str) -> str:
+    """ДД-ММ -> YYYY-MM-DD (автоматически подставляет текущий/следующий год)"""
+    try:
+        day, month = map(int, date_input.replace(" ", "").split("-"))
+    except ValueError:
+        raise ValueError("Неверный формат")
+    
+    year = datetime.now().year
+    dt = datetime(year, month, day)
+    # Если дата уже прошла в этом году, берём следующий год
+    if dt.date() < datetime.now().date():
+        year += 1
+        dt = datetime(year, month, day)
+    return dt.strftime("%Y-%m-%d")
 
 def welcome_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardBuilder().button(text="📅 Забронировать запись", callback_data="book_start").button(
@@ -12,7 +36,7 @@ def admin_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📖 Все брони", callback_data="admin_bookings_list")
     ).row(
         InlineKeyboardButton(text="➕ Создать слот", callback_data="admin_add_slot"),
-        InlineKeyboardButton(text="🔄 Автопродление", callback_data="admin_auto_extend")  # 🆕
+        InlineKeyboardButton(text="🔄 Автопродление", callback_data="admin_auto_extend")
     ).row(
         InlineKeyboardButton(text="💰 Услуги", callback_data="admin_services"),
         InlineKeyboardButton(text="📅 Фильтр по дате", callback_data="adm_filter_date")
@@ -23,15 +47,9 @@ def admin_kb() -> InlineKeyboardMarkup:
 
 def dates_kb(dates: list[str]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for d in sorted(dates):
-        # Форматируем: 2024-05-15 (Ср)
-        dt = datetime.strptime(d, "%Y-%m-%d")
-        day_name = dt.strftime("%A")  # Понедельник, Вторник...
-        # Сокращаем до 3 букв на русском
-        ru_days = {"Monday": "Пн", "Tuesday": "Вт", "Wednesday": "Ср", "Thursday": "Чт", "Friday": "Пт", "Saturday": "Сб", "Sunday": "Вс"}
-        display = f"{d} ({ru_days.get(day_name, day_name[:2])})"
-        kb.button(text=display, callback_data=f"book_date:{d}")
-    kb.adjust(1)  # ✅ 1 кнопка на строку
+    for d in sorted(dates): 
+        kb.button(text=format_date_display(d), callback_data=f"book_date:{d}")
+    kb.adjust(1)  # 1 кнопка на строку
     return kb.as_markup()
 
 def multi_slots_kb(slots: list, selected_ids: list[int]) -> InlineKeyboardMarkup:
