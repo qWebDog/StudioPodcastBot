@@ -1,5 +1,5 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 def welcome_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardBuilder().button(text="📅 Забронировать запись", callback_data="book_start").button(
