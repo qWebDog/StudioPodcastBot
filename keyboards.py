@@ -23,7 +23,9 @@ def admin_kb() -> InlineKeyboardMarkup:
 
 def dates_kb(dates: list[str]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for d in sorted(dates): kb.button(text=d, callback_data=f"book_date:{d}")
+    for d in sorted(dates): 
+        kb.button(text=d, callback_data=f"book_date:{d}")
+    kb.adjust(1)  # ✅ Принудительно 1 кнопка на строку
     return kb.as_markup()
 
 def multi_slots_kb(slots: list, selected_ids: list[int]) -> InlineKeyboardMarkup:
