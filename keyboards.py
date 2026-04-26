@@ -12,11 +12,12 @@ def admin_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📖 Все брони", callback_data="admin_bookings_list")
     ).row(
         InlineKeyboardButton(text="➕ Создать слот", callback_data="admin_add_slot"),
-        InlineKeyboardButton(text="💰 Услуги", callback_data="admin_services")
+        InlineKeyboardButton(text="🔄 Автопродление", callback_data="admin_auto_extend")  # 🆕
     ).row(
-        InlineKeyboardButton(text="📅 Фильтр по дате", callback_data="adm_filter_date"),
-        InlineKeyboardButton(text="📱 Поиск по тел.", callback_data="adm_search_phone")
+        InlineKeyboardButton(text="💰 Услуги", callback_data="admin_services"),
+        InlineKeyboardButton(text="📅 Фильтр по дате", callback_data="adm_filter_date")
     ).row(
+        InlineKeyboardButton(text="📱 Поиск по тел.", callback_data="adm_search_phone"),
         InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")
     ).adjust(2).as_markup()
 
