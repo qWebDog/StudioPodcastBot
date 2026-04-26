@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, func, select
 
-# ✅ ПРАВИЛЬНОЕ ОБЪЯВЛЕНИЕ БАЗЫ
 Base = declarative_base()
 
 class User(Base):
@@ -25,9 +24,10 @@ class Service(Base):
 class Slot(Base):
     __tablename__ = "slots"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    date = Column(String, nullable=False)  # YYYY-MM-DD
+    date = Column(String, nullable=False)
     start_time = Column(String, nullable=False)
     end_time = Column(String, nullable=False)
+    price = Column(Float, default=0.0)  # 🆕 Цена за слот
     is_booked = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
 
@@ -59,7 +59,6 @@ def validate_phone(phone: str) -> bool:
     return 7 <= len(digits) <= 15
 
 async def get_booking_details(booking_id: int):
-    """Возвращает кортеж: (Booking, Slot, User)"""
     async with async_session() as s:
         b = await s.get(Booking, booking_id)
         if not b: return None, None, None
