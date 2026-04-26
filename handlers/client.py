@@ -131,14 +131,20 @@ async def manage_services(cb: CallbackQuery, state: FSMContext):
                     slot_total += sl.price
                     times_str.append(f"{sl.start_time}-{sl.end_time}")
         total = slot_total + svc_total
-        await cb.message.answer(
-            f"📋 *Итог бронирования:*\n"
-            f"📅 {data['date']}\n"
+        
+        # ✅ Исправлено: закрывающие теги ** для корректного Markdown
+        summary_text = (
+            f"📋 **Итог бронирования:**\n"
+            f"📅 {format_date_display(data['date'])}\n"
             f"⏰ {', '.join(times_str)}\n"
             f"📞 {data['phone']}\n"
             f"🎙️ Часы: {int(slot_total)}₽\n"
             f"💰 Услуги: {int(svc_total)}₽\n"
-            f"💵 *Всего: {int(total)}₽",
+            f"💵 **Всего: {int(total)}₽**"
+        )
+        
+        await cb.message.answer(
+            summary_text,
             reply_markup=confirm_kb(), parse_mode="Markdown"
         )
         await cb.answer(); return
@@ -191,7 +197,7 @@ async def show_my_bookings(cb: CallbackQuery):
         await cb.answer()
         return
 
-    msg = "📋 *Ваши записи:*\n"
+    msg = "📋 **Ваши записи:**\n"
     kb = InlineKeyboardBuilder()
 
     for b in bookings:
