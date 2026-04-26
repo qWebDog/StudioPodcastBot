@@ -25,9 +25,10 @@ def dates_kb(dates: list[str]) -> InlineKeyboardMarkup:
     for d in sorted(dates): kb.button(text=d, callback_data=f"book_date:{d}")
     return kb.as_markup()
 
-def times_kb(times: list[str]) -> InlineKeyboardMarkup:
+def slots_kb(slots: list) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for t in sorted(times): kb.button(text=t, callback_data=f"book_time:{t}")
+    for s in slots:
+        kb.button(text=f"⏰ {s.start_time}-{s.end_time} | 💰 {int(s.price)}₽", callback_data=f"book_time:{s.id}")
     return kb.as_markup()
 
 def services_kb(svcs: list) -> InlineKeyboardMarkup:
@@ -44,13 +45,16 @@ def slot_list_kb(slots: list) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for s in slots:
         icon = "🔒" if s.is_booked else "⏳"
-        kb.button(text=f"{icon} {s.date} | {s.start_time}-{s.end_time}", callback_data=f"slot_manage:{s.id}")
+        kb.button(text=f"{icon} {s.date} | {s.start_time}-{s.end_time} | 💰{int(s.price)}₽", callback_data=f"slot_manage:{s.id}")
     kb.adjust(1)
     return kb.as_markup()
 
 def slot_action_kb(slot_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardBuilder().button(text="❌ Отменить слот", callback_data=f"slot_cancel:{slot_id}").button(
-        text="🔄 Перенести", callback_data=f"slot_move:{slot_id}"
+    return InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="❌ Отменить", callback_data=f"slot_cancel:{slot_id}"),
+        InlineKeyboardButton(text="💰 Цена", callback_data=f"slot_edit_price:{slot_id}")
+    ).row(
+        InlineKeyboardButton(text="🔄 Перенести", callback_data=f"slot_move:{slot_id}")
     ).button(text="🔙 Назад", callback_data="admin_slots_list").adjust(1).as_markup()
 
 def booking_action_kb(booking_id: int, status: str) -> InlineKeyboardMarkup:
