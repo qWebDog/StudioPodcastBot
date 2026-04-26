@@ -4,7 +4,7 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database import async_session, User, Slot, Service, Booking, get_user, get_booking_details
@@ -31,6 +31,7 @@ async def cmd_admin(m: Message):
     if m.from_user.id not in ADMIN_IDS: return
     await m.answer("👑 Панель администратора:", reply_markup=admin_kb())
 
+# --- СЛОТЫ ---
 @router.callback_query(F.data == "admin_add_slot", F.from_user.id.in_(ADMIN_IDS))
 async def admin_add_slot(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AdminFSM.slot_date)
@@ -52,10 +53,13 @@ async def proc_slot_start(m: Message, state: FSMContext):
 @router.message(AdminFSM.slot_end, F.from_user.id.in_(ADMIN_IDS))
 async def proc_slot_end(m: Message, state: FSMContext):
     d = await state.get_data()
+    end_time = m.text.strip()  # 🆕 БЕРЁМ ИЗ ТЕКУЩЕГО СООБЩЕНИЯ
+    
     async with async_session() as s:
-        s.add(Slot(date=d["date"], start_time=d["start"], end_time=d["end"]))
+        s.add(Slot(date=d["date"], start_time=d["start"], end_time=end_time))
         await s.commit()
-    await m.answer(f"✅ Слот добавлен: {d['date']} {d['start']}-{d['end']}")
+    
+    await m.answer(f"✅ Слот добавлен: {d['date']} {d['start']}-{end_time}")
     await state.clear()
 
 @router.callback_query(F.data == "admin_slots_list", F.from_user.id.in_(ADMIN_IDS))
@@ -119,11 +123,17 @@ async def proc_move_start(m: Message, state: FSMContext):
 async def proc_move_end(m: Message, state: FSMContext):
     data = await state.get_data()
     sid = data["move_slot_id"]
+    new_end = m.text.strip()  # 🆕 БЕРЁМ ИЗ ТЕКУЩЕГО СООБЩЕНИЯ
+    
     async with async_session() as s:
         slot = await s.get(Slot, sid)
         if not slot: return await m.answer("❌ Ошибка")
+        
         old_d, old_t = slot.date, slot.start_time
-        slot.date, slot.start_time, slot.end_time = data["move_date"], data["move_start"], data["move_end"]
+        slot.date = data["move_date"]
+        slot.start_time = data["move_start"]
+        slot.end_time = new_end
+        
         if slot.is_booked:
             b = (await s.execute(select(Booking).where(Booking.slot_id == sid, Booking.status == "confirmed"))).scalar_one_or_none()
             if b:
@@ -135,6 +145,7 @@ async def proc_move_end(m: Message, state: FSMContext):
     await m.answer(f"✅ Слот перенесён: {slot.date} {slot.start_time}-{slot.end_time}")
     await state.clear()
 
+# --- УСЛУГИ ---
 @router.callback_query(F.data == "admin_services", F.from_user.id.in_(ADMIN_IDS))
 async def admin_svc(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AdminFSM.svc_name)
@@ -161,6 +172,7 @@ async def proc_svc_price(m: Message, state: FSMContext):
     await m.answer(f"✅ Услуга добавлена: {d['name']} — {int(price)}₽")
     await state.clear()
 
+# --- РАССЫЛКА ---
 @router.callback_query(F.data == "admin_broadcast", F.from_user.id.in_(ADMIN_IDS))
 async def admin_broadcast(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AdminFSM.broadcast)
@@ -183,6 +195,7 @@ async def proc_broadcast(m: Message, state: FSMContext):
     await m.answer(f"✅ Готово. Доставлено: {ok}")
     await state.clear()
 
+# --- БРОНИ ---
 @router.callback_query(F.data == "admin_bookings_list", F.from_user.id.in_(ADMIN_IDS))
 async def list_bookings(cb: CallbackQuery):
     async with async_session() as s:
@@ -199,6 +212,7 @@ async def list_bookings(cb: CallbackQuery):
         msg += f"\n{status_emoji} #{b.id} | {slot.date} {slot.start_time}\n👤 {user.username or 'Нет'} | 📞 {user.phone or 'Нет'}"
         kb.button(text=f"#{b.id}", callback_data=f"adm_manage:{b.id}")
     kb.adjust(3)
+    kb.button(text="🔙 В меню", callback_data="admin_menu")
 
     await cb.message.answer(msg, parse_mode="Markdown", reply_markup=kb.as_markup())
     await cb.answer()
@@ -246,6 +260,7 @@ async def adm_confirm(cb: CallbackQuery):
     await cb.answer("✅ Подтверждено")
     await cb.message.edit_text(f"✅ Бронь #{bid} подтверждена.", reply_markup=InlineKeyboardBuilder().button(text="🔙 Назад", callback_data="admin_bookings_list").as_markup())
 
+# --- ФИЛЬТРЫ И ПОИСК ---
 @router.callback_query(F.data == "adm_filter_date", F.from_user.id.in_(ADMIN_IDS))
 async def start_date_filter(cb: CallbackQuery, state: FSMContext):
     await state.set_state(AdminFSM.filter_date)
