@@ -6,11 +6,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
-from sqlalchemy import select
+from sqlalchemy import select, func
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database import async_session, User, Slot, Service, Booking, get_user, get_booking_details
 from keyboards import admin_kb, slot_list_kb, slot_action_kb, booking_action_kb
 from config import ADMIN_IDS
+
 
 router = Router()
 
@@ -28,6 +29,10 @@ class AdminFSM(StatesGroup):
     move_end = State()
     filter_date = State()
     search_phone = State()
+    auto_days = State()
+    auto_start = State()
+    auto_end = State()
+    auto_price = State()
 
 @router.message(Command("admin"))
 async def cmd_admin(m: Message):
@@ -180,7 +185,96 @@ async def adm_manage(cb: CallbackQuery):
     await cb.message.edit_text(txt, parse_mode="Markdown", reply_markup=booking_action_kb(b.id, b.status))
     await cb.answer()
 
-# (Остальные функции: adm_cancel, adm_confirm, filter_date, search_phone, broadcast - оставьте из прошлой версии, они совместимы)
+# --- АВТОПРОДЛЕНИЕ РАСПИСАНИЯ ---
+@router.callback_query(F.data == "admin_auto_extend", F.from_user.id.in_(ADMIN_IDS))
+async def start_auto_extend(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminFSM.auto_days)
+    await cb.message.answer("📅 Введите количество дней для продления (например, 7 или 30):")
+    await cb.answer()
+
+@router.message(AdminFSM.auto_days, F.from_user.id.in_(ADMIN_IDS))
+async def proc_auto_days(m: Message, state: FSMContext):
+    try: days = int(m.text.strip())
+    except: return await m.answer("❌ Введите целое число.")
+    if days <= 0 or days > 365: return await m.answer("❌ От 1 до 365 дней.")
+    await state.update_data(days=days)
+    await state.set_state(AdminFSM.auto_start)
+    await m.answer("⏰ Начало рабочего дня (например, 10:00):")
+
+@router.message(AdminFSM.auto_start, F.from_user.id.in_(ADMIN_IDS))
+async def proc_auto_start(m: Message, state: FSMContext):
+    await state.update_data(start_time=m.text.strip())
+    await state.set_state(AdminFSM.auto_end)
+    await m.answer("⏱️ Конец рабочего дня (например, 20:00):")
+
+@router.message(AdminFSM.auto_end, F.from_user.id.in_(ADMIN_IDS))
+async def proc_auto_end(m: Message, state: FSMContext):
+    await state.update_data(end_time=m.text.strip())
+    await state.set_state(AdminFSM.auto_price)
+    await m.answer("💵 Цена за 1 час (только цифры):")
+
+@router.message(AdminFSM.auto_price, F.from_user.id.in_(ADMIN_IDS))
+async def proc_auto_price(m: Message, state: FSMContext):
+    try: price = float(m.text.replace(",", "."))
+    except: return await m.answer("❌ Некорректная цена.")
+    
+    data = await state.get_data()
+    
+    # 📅 Определяем дату старта (следующий день после последнего слота в БД)
+    async with async_session() as s:
+        res = await s.execute(select(func.max(Slot.date)))
+        max_date_str = res.scalar()
+        
+        if max_date_str:
+            start_date = datetime.strptime(max_date_str, "%Y-%m-%d").date() + timedelta(days=1)
+        else:
+            from datetime import date
+            start_date = date.today() + timedelta(days=1)
+            
+        # Валидация времени
+        start_dt = datetime.strptime(data["start_time"], "%H:%M")
+        end_dt = datetime.strptime(data["end_time"], "%H:%M")
+        if start_dt >= end_dt:
+            return await m.answer("❌ Конец дня должен быть позже начала.")
+            
+        new_slots = []
+        skipped = 0
+        
+        for i in range(data["days"]):
+            d = start_date + timedelta(days=i)
+            date_str = d.strftime("%Y-%m-%d")
+            
+            # Пропускаем даты, где уже есть слоты
+            check = await s.execute(select(Slot.id).where(Slot.date == date_str).limit(1))
+            if check.scalar():
+                skipped += 1
+                continue
+                
+            curr = start_dt
+            while (curr + timedelta(hours=1)) <= end_dt:
+                new_slots.append(Slot(
+                    date=date_str,
+                    start_time=curr.strftime("%H:%M"),
+                    end_time=(curr + timedelta(hours=1)).strftime("%H:%M"),
+                    price=price
+                ))
+                curr += timedelta(hours=1)
+                
+        if not new_slots:
+            return await m.answer(f"⚠️ На все {data['days']} дней слоты уже существуют.")
+            
+        s.add_all(new_slots)
+        await s.commit()
+        
+    await m.answer(
+        f"✅ Расписание продлено!\n"
+        f"📅 Период: {start_date} → {start_date + timedelta(days=data['days']-1)}\n"
+        f"🕒 Создано слотов: `{len(new_slots)}`\n"
+        f"⏭️ Пропущено дат: `{skipped}`\n"
+        f"💰 Цена/час: `{int(price)}₽`"
+    )
+    await state.clear()
+
 @router.callback_query(F.data == "admin_menu")
 async def go_back_to_admin(cb: CallbackQuery):
     await cb.message.answer("👑 Панель администратора:", reply_markup=admin_kb())
