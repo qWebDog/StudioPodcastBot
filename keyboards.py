@@ -25,10 +25,14 @@ def dates_kb(dates: list[str]) -> InlineKeyboardMarkup:
     for d in sorted(dates): kb.button(text=d, callback_data=f"book_date:{d}")
     return kb.as_markup()
 
-def slots_kb(slots: list) -> InlineKeyboardMarkup:
+def multi_slots_kb(slots: list, selected_ids: list[int]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for s in slots:
-        kb.button(text=f"⏰ {s.start_time}-{s.end_time} | 💰 {int(s.price)}₽", callback_data=f"book_time:{s.id}")
+        is_sel = s.id in selected_ids
+        txt = f"{'✅ ' if is_sel else '⏳ '}{s.start_time}-{s.end_time} | {int(s.price)}₽"
+        kb.button(text=txt, callback_data=f"slot_toggle:{s.id}")
+    kb.button(text="📝 Перейти к услугам", callback_data="slots_done")
+    kb.adjust(2)
     return kb.as_markup()
 
 def services_kb(svcs: list) -> InlineKeyboardMarkup:
