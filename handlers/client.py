@@ -251,6 +251,22 @@ async def manage_services(cb: CallbackQuery, state: FSMContext):
     await state.update_data(selected_services=sel)
     await cb.answer(f"✅ Добавлено: {svc.name}")
 
+async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list, total_price: float):
+    """Отправляет всем админам уведомление о новой брони."""
+    msg = (
+        f"🆕 **Новая бронь #{booking_id}**\n"
+        f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
+        f"📅 {format_date_display(data['date'])}\n"
+        f"⏰ {', '.join(times_str)}\n"
+        f"💰 {int(total_price)}₽"
+    )
+    for aid in ADMIN_IDS:
+        try:
+            await bot.send_message(aid, msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"❌ Notify admin {aid} failed: {e}")
+        await asyncio.sleep(0.3)
+
 @router.callback_query(F.data == "book_confirm")
 async def confirm_booking(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
