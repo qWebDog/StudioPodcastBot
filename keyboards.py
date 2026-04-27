@@ -95,3 +95,9 @@ def booking_action_kb(booking_id: int, status: str) -> InlineKeyboardMarkup:
         kb.button(text="❌ Отмена", callback_data=f"adm_cancel:{booking_id}")
     kb.button(text="🔙 Назад", callback_data="admin_bookings_list")
     return kb.adjust(2).as_markup()
+
+def saved_data_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="✅ Использовать сохранённые", callback_data="use_saved_data"),
+        InlineKeyboardButton(text="📝 Ввести новые", callback_data="enter_new_data")
+    ).as_markup()
