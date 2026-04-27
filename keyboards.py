@@ -26,8 +26,11 @@ def parse_admin_date(date_input: str) -> str:
     return dt.strftime("%Y-%m-%d")
 
 def welcome_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardBuilder().button(text="📅 Забронировать запись", callback_data="book_start").button(
-        text="📋 Мои записи", callback_data="my_bookings"
+    return InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="📅 Забронировать запись", callback_data="book_start")
+    ).row(
+        InlineKeyboardButton(text="📋 Мои записи", callback_data="my_bookings"),
+        InlineKeyboardButton(text="📞 Связаться с админом", callback_data="contact_admin")
     ).adjust(1).as_markup()
 
 def admin_kb() -> InlineKeyboardMarkup:
