@@ -5,7 +5,7 @@ from datetime import datetime
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from database import async_session, User, Slot, Service, Booking, get_user, validate_phone, get_booking_details
@@ -22,6 +22,16 @@ class BookFSM(StatesGroup):
     phone = State()
     services = State()
 
+# 🧭 Вспомогательные клавиатуры для навигации
+def cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")]])
+
+def back_cancel_kb(back_cb: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=back_cb),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    ]])
+
 @router.message(F.text == "/start")
 async def cmd_start(m: Message, state: FSMContext):
     await state.clear()
@@ -34,12 +44,11 @@ async def start_booking(cb: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "contact_admin")
 async def contact_admin(cb: CallbackQuery):
-    # ✏️ ИЗМЕНИТЕ КОНТАКТЫ ПОД СЕБЯ:
     msg = (
         "📞 **Связь с администратором:**\n"
-        "👤 Telegram: `@админ`\n"
+        "👤 Telegram: `@ваш_ник_админа`\n"
         "📱 Телефон: `+7 (999) 123-45-67`\n"
-        "🕒 График: 12:00 – 22:00 (МСК)\n"
+        "🕒 График: 10:00 – 22:00 (МСК)\n"
         "Отвечаем в течение 15 минут."
     )
     await cb.message.answer(msg, parse_mode="Markdown")
@@ -67,12 +76,20 @@ async def select_date(cb: CallbackQuery, state: FSMContext):
     async with async_session() as s:
         res = await s.execute(select(Slot).where(Slot.date == date_iso, Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
         slots = res.scalars().all()
-    if not slots: await cb.message.answer("❌ На эту дату все часы заняты. Выберите другую."); await cb.answer(); return
+    if not slots: await cb.message.answer("❌ На эту дату все часы заняты. Выберите другую.", reply_markup=cancel_kb()); await cb.answer(); return
     
     price_per_hour = int(slots[0].price)
     await state.set_state(BookFSM.slots)
     await state.update_data(selected_slots=[])
-    await cb.message.answer(f"📆 {format_date_display(date_iso)} | 💰 **{price_per_hour}₽/час**\n⏰ **Шаг 2/5:** Выберите нужные часы:", reply_markup=time_slots_kb(slots, []), parse_mode="Markdown")
+    await cb.message.answer(
+        f"📆 {format_date_display(date_iso)} | 💰 **{price_per_hour}₽/час**\n"
+        f"⏰ **Шаг 2/5:** Выберите нужные часы:",
+        reply_markup=time_slots_kb(slots, []).inline_keyboard + [
+            [InlineKeyboardButton(text="⬅️ Назад к датам", callback_data="back_to_date"),
+             InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")]
+        ],
+        parse_mode="Markdown"
+    )
     await cb.answer()
 
 @router.callback_query(F.data.startswith("slot_toggle:"))
@@ -85,24 +102,44 @@ async def toggle_slot(cb: CallbackQuery, state: FSMContext):
     async with async_session() as s:
         res = await s.execute(select(Slot).where(Slot.date == data["date"], Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
         slots = res.scalars().all()
-    try: await cb.message.edit_reply_markup(reply_markup=time_slots_kb(slots, sel))
+    
+    kb = InlineKeyboardBuilder()
+    for sl in slots:
+        is_sel = sl.id in sel
+        kb.button(text=f"{'✅ ' if is_sel else '⏳ '}{sl.start_time}-{sl.end_time}", callback_data=f"slot_toggle:{sl.id}")
+    kb.button(text="📝 Далее", callback_data="slots_done")
+    kb.adjust(2)
+    kb.row(
+        InlineKeyboardButton(text="⬅️ Назад к датам", callback_data="back_to_date"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    try: await cb.message.edit_reply_markup(reply_markup=kb.as_markup())
     except Exception: pass
     await cb.answer()
 
 @router.callback_query(F.data == "slots_done")
 async def finish_slots(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    if not data.get("selected_slots"): await cb.answer("⚠️ Выберите хотя бы один час!", show_alert=True); return
+    if not data.get("selected_slots"):
+        await cb.answer("⚠️ Выберите хотя бы один час!", show_alert=True); return
+
     user = await get_user(cb.from_user.id)
     if user and user.client_name and user.phone:
-        await cb.message.answer(f"👤 **Шаг 3/5:** Данные уже сохранены:\n👤 Имя: `{user.client_name}`\n📞 Телефон: `{user.phone}`", reply_markup=InlineKeyboardBuilder().row(
+        kb = InlineKeyboardBuilder().row(
             InlineKeyboardButton(text="✅ Использовать сохранённые", callback_data="use_saved_data"),
             InlineKeyboardButton(text="📝 Ввести новые", callback_data="enter_new_data")
-        ).as_markup(), parse_mode="Markdown")
+        ).row(
+            InlineKeyboardButton(text="⬅️ Назад к времени", callback_data="back_to_slots"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+        ).as_markup()
+        await cb.message.answer(
+            f"👤 **Шаг 3/5:** Данные уже сохранены:\n👤 Имя: `{user.client_name}`\n📞 Телефон: `{user.phone}`",
+            reply_markup=kb, parse_mode="Markdown"
+        )
     else:
         await state.set_state(BookFSM.name)
         hint = f"\n(Ранее было: `{user.client_name}`)" if user and user.client_name else ""
-        await cb.message.answer(f"👤 **Шаг 3/5:** Введите ваше имя{hint}:")
+        await cb.message.answer(f"👤 **Шаг 3/5:** Введите ваше имя{hint}:", reply_markup=back_cancel_kb("back_to_slots"))
     await cb.answer()
 
 @router.callback_query(F.data == "use_saved_data")
@@ -110,13 +147,13 @@ async def use_saved(cb: CallbackQuery, state: FSMContext):
     user = await get_user(cb.from_user.id)
     await state.update_data(client_name=user.client_name, phone=user.phone)
     await cb.message.edit_text("✅ Использованы сохранённые данные. Переходим к услугам...")
-    await _go_to_services(cb.message, state)
+    await _show_services(cb.message, state)
     await cb.answer()
 
 @router.callback_query(F.data == "enter_new_data")
 async def enter_new(cb: CallbackQuery, state: FSMContext):
     await state.set_state(BookFSM.name)
-    await cb.message.edit_text("👤 Введите ваше имя:")
+    await cb.message.edit_text("👤 Введите ваше имя:", reply_markup=back_cancel_kb("back_to_slots"))
     await cb.answer()
 
 @router.message(BookFSM.name)
@@ -130,7 +167,7 @@ async def save_name(m: Message, state: FSMContext):
         else: user.client_name = name
         await s.commit()
     await state.set_state(BookFSM.phone)
-    await m.answer("📞 **Шаг 4/5:** Введите номер телефона:")
+    await m.answer("📞 **Шаг 4/5:** Введите номер телефона:", reply_markup=back_cancel_kb("back_to_name"))
 
 @router.message(BookFSM.phone)
 async def save_phone(m: Message, state: FSMContext):
@@ -141,14 +178,23 @@ async def save_phone(m: Message, state: FSMContext):
         if not user: s.add(User(tg_id=m.from_user.id, username=m.from_user.username, phone=m.text.strip()))
         else: user.phone = m.text.strip()
         await s.commit()
-    await _go_to_services(m, state)
+    await _show_services(m, state)
 
-async def _go_to_services(event, state: FSMContext):
+async def _show_services(event, state: FSMContext):
     await state.set_state(BookFSM.services)
     await state.update_data(selected_services=[])
     async with async_session() as s:
         svcs = (await s.execute(select(Service).where(Service.is_active))).scalars().all()
-    await event.answer("🛠 **Шаг 5/5:** Выберите доп. услуги (или 'Завершить'):", reply_markup=services_kb(svcs), parse_mode="Markdown")
+    
+    kb = InlineKeyboardBuilder()
+    for svc in svcs: kb.button(text=f"{svc.name} ({int(svc.price)}₽)", callback_data=f"book_svc:{svc.id}")
+    kb.button(text="✅ Завершить выбор", callback_data="book_svcs_done")
+    kb.adjust(2)
+    kb.row(
+        InlineKeyboardButton(text="⬅️ Назад к телефону", callback_data="back_to_phone"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    await event.answer("🛠 **Шаг 5/5:** Выберите доп. услуги (или 'Завершить'):", reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("book_svc:") | (F.data == "book_svcs_done"))
 async def manage_services(cb: CallbackQuery, state: FSMContext):
@@ -161,23 +207,39 @@ async def manage_services(cb: CallbackQuery, state: FSMContext):
                 sl = await s.get(Slot, sid)
                 if sl: slot_total += sl.price; times_str.append(f"{sl.start_time}-{sl.end_time}")
         total = slot_total + svc_total
-        await cb.message.answer(f"📋 **Итог бронирования:**\n👤 {data['client_name']}\n📞 {data['phone']}\n📅 {format_date_display(data['date'])}\n⏰ {', '.join(times_str)}\n🎙️ Часы: {int(slot_total)}₽\n💰 Услуги: {int(svc_total)}₽\n💵 **Всего: {int(total)}₽**", reply_markup=confirm_kb(), parse_mode="Markdown")
+        
+        kb = InlineKeyboardBuilder().button(text="✅ Подтвердить бронь", callback_data="book_confirm").row(
+            InlineKeyboardButton(text="⬅️ Изменить услуги", callback_data="back_to_services"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+        ).as_markup()
+        
+        await cb.message.answer(
+            f"📋 **Итог бронирования:**\n👤 {data['client_name']}\n📞 {data['phone']}\n"
+            f"📅 {format_date_display(data['date'])}\n⏰ {', '.join(times_str)}\n"
+            f"🎙️ Часы: {int(slot_total)}₽\n💰 Услуги: {int(svc_total)}₽\n💵 **Всего: {int(total)}₽**",
+            reply_markup=kb, parse_mode="Markdown"
+        )
         await cb.answer(); return
+        
     sid = int(cb.data.split(":")[1])
     async with async_session() as s: svc = await s.get(Service, sid)
     sel = data.get("selected_services", [])
     if not any(x["id"] == sid for x in sel): sel.append({"id": svc.id, "name": svc.name, "price": svc.price})
-    await state.update_data(selected_services=sel); await cb.answer(f"✅ Добавлено: {svc.name}")
+    await state.update_data(selected_services=sel)
+    await cb.answer(f"✅ Добавлено: {svc.name}")
 
 @router.callback_query(F.data == "book_confirm")
 async def confirm_booking(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    if not data.get("selected_slots") or not data.get("client_name") or not data.get("phone"): await cb.message.answer("⏳ Данные утеряны. Начните заново по команде /start"); await state.clear(); return
+    if not data.get("selected_slots") or not data.get("client_name") or not data.get("phone"):
+        await cb.message.answer("⏳ Данные утеряны. Начните заново по команде /start"); await state.clear(); return
+
     async with async_session() as s:
         slots = []
         for sid in data["selected_slots"]:
             sl = await s.get(Slot, sid)
-            if not sl or sl.is_booked or not sl.is_active: await cb.message.answer(f"❌ Слот {sl.start_time if sl else 'N/A'}-{sl.end_time if sl else ''} только что забронировали."); await state.clear(); return
+            if not sl or sl.is_booked or not sl.is_active:
+                await cb.message.answer(f"❌ Слот {sl.start_time if sl else 'N/A'}-{sl.end_time if sl else ''} только что забронировали."); await state.clear(); return
             slots.append(sl)
         for sl in slots: sl.is_booked = True
         svc_total = sum(x["price"] for x in data.get("selected_services", []))
@@ -187,7 +249,61 @@ async def confirm_booking(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer(f"✅ Бронь на {format_date_display(data['date'])} создана! Сумма: {int(slot_total+svc_total)}₽. За 2 часа пришлём напоминание.")
     await state.clear(); await cb.answer()
 
-# ✅ РАБОЧИЙ РАЗДЕЛ "МОИ ЗАПИСИ"
+# 🔄 Навигация
+@router.callback_query(F.data == "book_cancel")
+async def cancel_booking(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await cb.message.answer("❌ Бронирование отменено. Вы можете начать заново в любое время.", reply_markup=welcome_kb())
+    await cb.answer()
+
+@router.callback_query(F.data == "back_to_date")
+async def back_to_date(cb: CallbackQuery, state: FSMContext):
+    await _show_dates(cb, state, is_callback=True)
+    await cb.answer()
+
+@router.callback_query(F.data == "back_to_slots")
+async def back_to_slots(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(BookFSM.slots)
+    data = await state.get_data()
+    sel = data.get("selected_slots", [])
+    async with async_session() as s:
+        res = await s.execute(select(Slot).where(Slot.date == data["date"], Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
+        slots = res.scalars().all()
+    price = int(slots[0].price) if slots else 0
+    kb = InlineKeyboardBuilder()
+    for sl in slots:
+        is_sel = sl.id in sel
+        kb.button(text=f"{'✅ ' if is_sel else '⏳ '}{sl.start_time}-{sl.end_time}", callback_data=f"slot_toggle:{sl.id}")
+    kb.button(text="📝 Далее", callback_data="slots_done")
+    kb.adjust(2)
+    kb.row(
+        InlineKeyboardButton(text="⬅️ Назад к датам", callback_data="back_to_date"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    await cb.message.edit_text(
+        f"📆 {format_date_display(data['date'])} | 💰 **{price}₽/час**\n⏰ Выберите нужные часы:",
+        reply_markup=kb.as_markup(), parse_mode="Markdown"
+    )
+    await cb.answer()
+
+@router.callback_query(F.data == "back_to_name")
+async def back_to_name(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(BookFSM.name)
+    await cb.message.edit_text("👤 Введите ваше имя:", reply_markup=back_cancel_kb("back_to_slots"))
+    await cb.answer()
+
+@router.callback_query(F.data == "back_to_phone")
+async def back_to_phone(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(BookFSM.phone)
+    await cb.message.edit_text("📞 Введите номер телефона:", reply_markup=back_cancel_kb("back_to_name"))
+    await cb.answer()
+
+@router.callback_query(F.data == "back_to_services")
+async def back_to_services(cb: CallbackQuery, state: FSMContext):
+    await _show_services(cb.message, state)
+    await cb.answer()
+
+# 📋 Мои записи
 @router.callback_query(F.data == "my_bookings")
 async def show_my_bookings(cb: CallbackQuery):
     async with async_session() as s:
