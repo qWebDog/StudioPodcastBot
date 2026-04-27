@@ -280,14 +280,27 @@ async def confirm_booking(cb: CallbackQuery, state: FSMContext):
             if not sl or sl.is_booked or not sl.is_active:
                 await cb.message.answer(f"❌ Слот {sl.start_time if sl else 'N/A'}-{sl.end_time if sl else ''} только что забронировали."); await state.clear(); return
             slots.append(sl)
+            
         for sl in slots: sl.is_booked = True
         svc_total = sum(x["price"] for x in data.get("selected_services", []))
         slot_total = sum(sl.price for sl in slots)
-        s.add(Booking(user_tg_id=cb.from_user.id, slot_ids=json.dumps(data["selected_slots"]), services=json.dumps([x["id"] for x in data.get("selected_services", [])]), total_price=slot_total+svc_total))
-        await s.commit()
-    await cb.message.answer(f"✅ Бронь на {format_date_display(data['date'])} создана! Сумма: {int(slot_total+svc_total)}₽. За 2 часа пришлём напоминание.")
-    await state.clear(); await cb.answer()
+        total_price = slot_total + svc_total
+        times_str = [f"{sl.start_time}-{sl.end_time}" for sl in slots]
 
+        new_booking = Booking(
+            user_tg_id=cb.from_user.id, 
+            slot_ids=json.dumps(data["selected_slots"]), 
+            services=json.dumps([x["id"] for x in data.get("selected_services", [])]), 
+            total_price=total_price
+        )
+        s.add(new_booking)
+        await s.commit()
+
+    # 📢 Уведомляем админов о новой записи
+    await _notify_new_booking(cb.bot, new_booking.id, data, times_str, total_price)
+
+    await cb.message.answer(f"✅ Бронь на {format_date_display(data['date'])} создана! Сумма: {int(total_price)}₽. За 2 часа пришлём напоминание.")
+    await state.clear(); await cb.answer()
 # 🔄 Навигация и отмена
 @router.callback_query(F.data == "book_cancel")
 async def cancel_booking(cb: CallbackQuery, state: FSMContext):
