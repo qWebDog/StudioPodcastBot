@@ -9,7 +9,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from database import async_session, User, Slot, Service, Booking, get_user, validate_phone, get_booking_details
-from keyboards import welcome_kb, dates_kb, time_slots_kb, services_kb, confirm_kb, format_date_display
+from keyboards import welcome_kb, dates_kb, time_slots_kb, services_kb, confirm_kb, format_date_display, saved_data_kb
 from config import ADMIN_IDS
 
 router = Router()
@@ -21,16 +21,6 @@ class BookFSM(StatesGroup):
     name = State()
     phone = State()
     services = State()
-
-# 🧭 Вспомогательные клавиатуры для навигации
-def cancel_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")]])
-
-def back_cancel_kb(back_cb: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="⬅️ Назад", callback_data=back_cb),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
-    ]])
 
 @router.message(F.text == "/start")
 async def cmd_start(m: Message, state: FSMContext):
@@ -76,19 +66,31 @@ async def select_date(cb: CallbackQuery, state: FSMContext):
     async with async_session() as s:
         res = await s.execute(select(Slot).where(Slot.date == date_iso, Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
         slots = res.scalars().all()
-    if not slots: await cb.message.answer("❌ На эту дату все часы заняты. Выберите другую.", reply_markup=cancel_kb()); await cb.answer(); return
+    if not slots:
+        kb = InlineKeyboardBuilder()
+        kb.button(text="❌ Отмена", callback_data="book_cancel")
+        await cb.message.answer("❌ На эту дату все часы заняты. Выберите другую.", reply_markup=kb.as_markup())
+        await cb.answer(); return
     
     price_per_hour = int(slots[0].price)
     await state.set_state(BookFSM.slots)
     await state.update_data(selected_slots=[])
+    
+    # 🛠 ПРАВИЛЬНАЯ СБОРКА КЛАВИАТУРЫ ЧЕРЕЗ BUILDER
+    kb = InlineKeyboardBuilder()
+    for sl in slots:
+        kb.button(text=f"⏳ {sl.start_time}-{sl.end_time}", callback_data=f"slot_toggle:{sl.id}")
+    kb.button(text="📝 Далее", callback_data="slots_done")
+    kb.adjust(2)
+    kb.row(
+        InlineKeyboardButton(text="⬅️ Назад к датам", callback_data="back_to_date"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    
     await cb.message.answer(
         f"📆 {format_date_display(date_iso)} | 💰 **{price_per_hour}₽/час**\n"
         f"⏰ **Шаг 2/5:** Выберите нужные часы:",
-        reply_markup=time_slots_kb(slots, []).inline_keyboard + [
-            [InlineKeyboardButton(text="⬅️ Назад к датам", callback_data="back_to_date"),
-             InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")]
-        ],
-        parse_mode="Markdown"
+        reply_markup=kb.as_markup(), parse_mode="Markdown"
     )
     await cb.answer()
 
@@ -103,6 +105,7 @@ async def toggle_slot(cb: CallbackQuery, state: FSMContext):
         res = await s.execute(select(Slot).where(Slot.date == data["date"], Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
         slots = res.scalars().all()
     
+    # 🛠 СБОРКА КЛАВИАТУРЫ С ПОДСВЕТКОЙ ВЫБРАННЫХ
     kb = InlineKeyboardBuilder()
     for sl in slots:
         is_sel = sl.id in sel
@@ -113,6 +116,7 @@ async def toggle_slot(cb: CallbackQuery, state: FSMContext):
         InlineKeyboardButton(text="⬅️ Назад к датам", callback_data="back_to_date"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
     )
+    
     try: await cb.message.edit_reply_markup(reply_markup=kb.as_markup())
     except Exception: pass
     await cb.answer()
@@ -125,21 +129,28 @@ async def finish_slots(cb: CallbackQuery, state: FSMContext):
 
     user = await get_user(cb.from_user.id)
     if user and user.client_name and user.phone:
-        kb = InlineKeyboardBuilder().row(
+        kb = InlineKeyboardBuilder()
+        kb.row(
             InlineKeyboardButton(text="✅ Использовать сохранённые", callback_data="use_saved_data"),
             InlineKeyboardButton(text="📝 Ввести новые", callback_data="enter_new_data")
-        ).row(
+        )
+        kb.row(
             InlineKeyboardButton(text="⬅️ Назад к времени", callback_data="back_to_slots"),
             InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
-        ).as_markup()
+        )
         await cb.message.answer(
             f"👤 **Шаг 3/5:** Данные уже сохранены:\n👤 Имя: `{user.client_name}`\n📞 Телефон: `{user.phone}`",
-            reply_markup=kb, parse_mode="Markdown"
+            reply_markup=kb.as_markup(), parse_mode="Markdown"
         )
     else:
         await state.set_state(BookFSM.name)
         hint = f"\n(Ранее было: `{user.client_name}`)" if user and user.client_name else ""
-        await cb.message.answer(f"👤 **Шаг 3/5:** Введите ваше имя{hint}:", reply_markup=back_cancel_kb("back_to_slots"))
+        kb = InlineKeyboardBuilder()
+        kb.row(
+            InlineKeyboardButton(text="⬅️ Назад к времени", callback_data="back_to_slots"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+        )
+        await cb.message.answer(f"👤 **Шаг 3/5:** Введите ваше имя{hint}:", reply_markup=kb.as_markup())
     await cb.answer()
 
 @router.callback_query(F.data == "use_saved_data")
@@ -153,7 +164,12 @@ async def use_saved(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "enter_new_data")
 async def enter_new(cb: CallbackQuery, state: FSMContext):
     await state.set_state(BookFSM.name)
-    await cb.message.edit_text("👤 Введите ваше имя:", reply_markup=back_cancel_kb("back_to_slots"))
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="⬅️ Назад к времени", callback_data="back_to_slots"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    await cb.message.edit_text("👤 Введите ваше имя:", reply_markup=kb.as_markup())
     await cb.answer()
 
 @router.message(BookFSM.name)
@@ -167,7 +183,12 @@ async def save_name(m: Message, state: FSMContext):
         else: user.client_name = name
         await s.commit()
     await state.set_state(BookFSM.phone)
-    await m.answer("📞 **Шаг 4/5:** Введите номер телефона:", reply_markup=back_cancel_kb("back_to_name"))
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="⬅️ Назад к имени", callback_data="back_to_name"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    await m.answer("📞 **Шаг 4/5:** Введите номер телефона:", reply_markup=kb.as_markup())
 
 @router.message(BookFSM.phone)
 async def save_phone(m: Message, state: FSMContext):
@@ -208,16 +229,18 @@ async def manage_services(cb: CallbackQuery, state: FSMContext):
                 if sl: slot_total += sl.price; times_str.append(f"{sl.start_time}-{sl.end_time}")
         total = slot_total + svc_total
         
-        kb = InlineKeyboardBuilder().button(text="✅ Подтвердить бронь", callback_data="book_confirm").row(
+        kb = InlineKeyboardBuilder()
+        kb.button(text="✅ Подтвердить бронь", callback_data="book_confirm")
+        kb.row(
             InlineKeyboardButton(text="⬅️ Изменить услуги", callback_data="back_to_services"),
             InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
-        ).as_markup()
+        )
         
         await cb.message.answer(
             f"📋 **Итог бронирования:**\n👤 {data['client_name']}\n📞 {data['phone']}\n"
             f"📅 {format_date_display(data['date'])}\n⏰ {', '.join(times_str)}\n"
             f"🎙️ Часы: {int(slot_total)}₽\n💰 Услуги: {int(svc_total)}₽\n💵 **Всего: {int(total)}₽**",
-            reply_markup=kb, parse_mode="Markdown"
+            reply_markup=kb.as_markup(), parse_mode="Markdown"
         )
         await cb.answer(); return
         
@@ -249,7 +272,7 @@ async def confirm_booking(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer(f"✅ Бронь на {format_date_display(data['date'])} создана! Сумма: {int(slot_total+svc_total)}₽. За 2 часа пришлём напоминание.")
     await state.clear(); await cb.answer()
 
-# 🔄 Навигация
+# 🔄 Навигация и отмена
 @router.callback_query(F.data == "book_cancel")
 async def cancel_booking(cb: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -270,6 +293,7 @@ async def back_to_slots(cb: CallbackQuery, state: FSMContext):
         res = await s.execute(select(Slot).where(Slot.date == data["date"], Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
         slots = res.scalars().all()
     price = int(slots[0].price) if slots else 0
+    
     kb = InlineKeyboardBuilder()
     for sl in slots:
         is_sel = sl.id in sel
@@ -289,13 +313,23 @@ async def back_to_slots(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "back_to_name")
 async def back_to_name(cb: CallbackQuery, state: FSMContext):
     await state.set_state(BookFSM.name)
-    await cb.message.edit_text("👤 Введите ваше имя:", reply_markup=back_cancel_kb("back_to_slots"))
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="⬅️ Назад к времени", callback_data="back_to_slots"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    await cb.message.edit_text("👤 Введите ваше имя:", reply_markup=kb.as_markup())
     await cb.answer()
 
 @router.callback_query(F.data == "back_to_phone")
 async def back_to_phone(cb: CallbackQuery, state: FSMContext):
     await state.set_state(BookFSM.phone)
-    await cb.message.edit_text("📞 Введите номер телефона:", reply_markup=back_cancel_kb("back_to_name"))
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="⬅️ Назад к имени", callback_data="back_to_name"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    await cb.message.edit_text("📞 Введите номер телефона:", reply_markup=kb.as_markup())
     await cb.answer()
 
 @router.callback_query(F.data == "back_to_services")
