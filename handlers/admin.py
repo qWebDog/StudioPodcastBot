@@ -236,28 +236,76 @@ async def proc_broadcast(m: Message, state: FSMContext):
         await asyncio.sleep(0.3)
     await m.answer(f"✅ Готово. Доставлено: {ok}"); await state.clear()
 
-# ==================== ФИЛЬТР ПО ДАТЕ ====================
-@router.callback_query(F.data == "adm_filter_date", F.from_user.id.in_(ADMIN_IDS))
-async def start_date_filter(cb: CallbackQuery, state: FSMContext):
-    await state.set_state(AdminFSM.filter_date); await cb.message.answer("📅 Введите дату (ГГГГ-ММ-ДД):"); await cb.answer()
-
-@router.message(AdminFSM.filter_date, F.from_user.id.in_(ADMIN_IDS))
-async def process_date_filter(m: Message, state: FSMContext):
-    date = m.text.strip()
-    try: datetime.strptime(date, "%Y-%m-%d")
-    except ValueError: return await m.answer("❌ Формат: ГГГГ-ММ-ДД")
+# ==================== БРОНИ ПО ДАТЕ (только с бронями) ====================
+@router.callback_query(F.data == "admin_bookings_by_date", F.from_user.id.in_(ADMIN_IDS))
+async def start_bookings_by_date(cb: CallbackQuery):
     async with async_session() as s:
-        stmt = select(Booking, Slot.start_time, Slot.end_time, Slot.date).join(Slot, Booking.slot_id == Slot.id).where(Slot.date == date).order_by(Booking.created_at.desc())
-        rows = (await s.execute(stmt)).all()
-    if not rows: return await m.answer(f"🔍 Броней на `{date}` не найдено.", reply_markup=InlineKeyboardBuilder().button(text="🔙 В меню", callback_data="admin_menu").as_markup(), parse_mode="Markdown")
-    msg = f"📅 *Брони на {date}:*\n"; kb = InlineKeyboardBuilder()
-    for b, start_t, end_t, d in rows:
-        user = await get_user(b.user_tg_id); status = "🟢" if b.status == "confirmed" else "🔴"
-        msg += f"\n{status} #{b.id} | {start_t}-{end_t}\n👤 {user.username or 'Нет'} | 📞 {user.phone or 'Нет'} | 💰 {int(b.total_price)}₽"
-        kb.button(text=f"#{b.id}", callback_data=f"adm_manage:{b.id}")
-    kb.button(text="🔙 В меню", callback_data="admin_menu"); kb.adjust(2)
-    await m.answer(msg, parse_mode="Markdown", reply_markup=kb.as_markup()); await state.clear()
+        # Получаем только те даты, на которые ЕСТЬ брони
+        res = await s.execute(
+            select(Slot.date)
+            .join(Booking, Booking.slot_id == Slot.id)
+            .where(Booking.status.in_(["confirmed", "confirmed_reminder"]))
+            .distinct()
+            .order_by(Slot.date.desc())
+        )
+        dates = [row[0] for row in res]
+    
+    if not dates:
+        return await cb.message.answer(
+            "📭 Пока нет броней ни на одну дату.",
+            reply_markup=InlineKeyboardBuilder().button(text="🔙 В меню", callback_data="admin_menu").as_markup()
+        )
+    
+    await cb.message.answer(
+        "🗓️ **Выберите дату для просмотра броней:**",
+        reply_markup=dates_with_bookings_kb(dates),
+        parse_mode="Markdown"
+    )
+    await cb.answer()
 
+@router.callback_query(F.data.startswith("adm_bookings_date:"), F.from_user.id.in_(ADMIN_IDS))
+async def show_bookings_for_date(cb: CallbackQuery):
+    date_iso = cb.data.split(":")[1]
+    
+    async with async_session() as s:
+        stmt = (
+            select(Booking, Slot.start_time, Slot.end_time)
+            .join(Slot, Booking.slot_id == Slot.id)
+            .where(
+                Slot.date == date_iso,
+                Booking.status.in_(["confirmed", "confirmed_reminder"])
+            )
+            .order_by(Slot.start_time)
+        )
+        rows = (await s.execute(stmt)).all()
+    
+    if not rows:
+        return await cb.message.answer(
+            f"🔍 На {format_date_display(date_iso)} нет активных броней.",
+            reply_markup=InlineKeyboardBuilder().button(text="🔙 К датам", callback_data="admin_bookings_by_date").as_markup(),
+            parse_mode="Markdown"
+        )
+    
+    msg = f"📅 **Брони на {format_date_display(date_iso)}:**\n"
+    kb = InlineKeyboardBuilder()
+    
+    for b, start_t, end_t in rows:
+        user = await get_user(b.user_tg_id)
+        status = "🟢" if b.status == "confirmed" else "🟡"
+        msg += (
+            f"\n{status} **#{b.id}** | ⏰ {start_t}-{end_t}\n"
+            f"👤 {user.client_name or user.username or 'Нет'} | 📞 `{user.phone or 'Нет'}`\n"
+            f"💰 {int(b.total_price)}₽"
+        )
+        kb.button(text=f"#{b.id}", callback_data=f"adm_manage:{b.id}")
+    
+    kb.button(text="🔙 К датам", callback_data="admin_bookings_by_date")
+    kb.button(text="🔙 В меню", callback_data="admin_menu")
+    kb.adjust(2)
+    
+    await cb.message.edit_text(msg, parse_mode="Markdown", reply_markup=kb.as_markup())
+    await cb.answer()
+    
 # ==================== ПОИСК ПО ТЕЛЕФОНУ ====================
 @router.callback_query(F.data == "adm_search_phone", F.from_user.id.in_(ADMIN_IDS))
 async def start_phone_search(cb: CallbackQuery, state: FSMContext):
