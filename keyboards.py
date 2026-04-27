@@ -52,13 +52,13 @@ def dates_kb(dates: list[str]) -> InlineKeyboardMarkup:
     kb.adjust(1)  # 1 кнопка на строку
     return kb.as_markup()
 
-def multi_slots_kb(slots: list, selected_ids: list[int]) -> InlineKeyboardMarkup:
+def time_slots_kb(slots: list, selected_ids: list[int]) -> InlineKeyboardMarkup:
+    """Кнопки только со временем. Цена выводится в сообщении."""
     kb = InlineKeyboardBuilder()
     for s in slots:
         is_sel = s.id in selected_ids
-        txt = f"{'✅ ' if is_sel else '⏳ '}{s.start_time}-{s.end_time} | {int(s.price)}₽"
-        kb.button(text=txt, callback_data=f"slot_toggle:{s.id}")
-    kb.button(text="📝 Перейти к услугам", callback_data="slots_done")
+        kb.button(text=f"{'✅ ' if is_sel else '⏳ '}{s.start_time}-{s.end_time}", callback_data=f"slot_toggle:{s.id}")
+    kb.button(text="📝 Далее", callback_data="slots_done")
     kb.adjust(2)
     return kb.as_markup()
 
