@@ -10,7 +10,7 @@ from aiogram.types import Message, CallbackQuery
 from sqlalchemy import select, func
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database import async_session, User, Slot, Service, Booking, get_user, get_booking_details
-from keyboards import admin_kb, slot_list_kb, slot_action_kb, booking_action_kb, format_date_display, parse_admin_date
+from keyboards import admin_kb, slot_list_kb, slot_action_kb, booking_action_kb, format_date_display, parse_admin_date, dates_with_bookings_kb
 from config import ADMIN_IDS
 
 router = Router()
