@@ -5,11 +5,11 @@ from datetime import datetime
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from database import async_session, User, Slot, Service, Booking, get_user, validate_phone, get_booking_details
-from keyboards import welcome_kb, dates_kb, time_slots_kb, services_kb, confirm_kb, format_date_display, saved_data_kb, back_cancel_kb
+from keyboards import welcome_kb, dates_kb, time_slots_kb, services_kb, confirm_kb, format_date_display, back_cancel_kb
 from config import ADMIN_IDS
 
 router = Router()
@@ -283,13 +283,11 @@ async def confirm_booking(cb: CallbackQuery, state: FSMContext):
         s.add(new_booking)
         await s.commit()
 
-    # Уведомление админам
     await _notify_new_booking(cb.bot, new_booking.id, data, times_str, total_price)
 
     await cb.message.answer(f"✅ Бронь на {format_date_display(data['date'])} создана! Сумма: {int(total_price)}₽. За 2 часа пришлём напоминание.")
     await state.clear(); await cb.answer()
 
-# Навигация
 @router.callback_query(F.data == "book_cancel")
 async def cancel_booking(cb: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -352,7 +350,6 @@ async def back_to_services(cb: CallbackQuery, state: FSMContext):
     await _show_services(cb.message, state)
     await cb.answer()
 
-# Мои записи
 @router.callback_query(F.data == "my_bookings")
 async def show_my_bookings(cb: CallbackQuery):
     async with async_session() as s:
@@ -386,7 +383,6 @@ async def my_cancel(cb: CallbackQuery):
     await cb.message.edit_text("❌ Вы отменили запись. Слоты освобождены."); await cb.answer()
     await _notify_admins(cb.bot, b, "cancelled")
 
-# Уведомления
 async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
     msg = (
         f"🆕 **Новая бронь #{booking_id}**\n"
