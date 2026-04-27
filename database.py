@@ -11,6 +11,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     tg_id = Column(Integer, unique=True, nullable=False)
     username = Column(String)
+    client_name = Column(String)  # 🆕 Явное имя пользователя
     phone = Column(String)
     created_at = Column(DateTime, server_default=func.now())
 
