@@ -115,3 +115,11 @@ def booking_action_kb(booking_id: int, status: str) -> InlineKeyboardMarkup:
         kb.button(text="❌ Отмена", callback_data=f"adm_cancel:{booking_id}")
     kb.button(text="🔙 Назад", callback_data="admin_bookings_list")
     return kb.adjust(2).as_markup()
+    
+def dates_with_bookings_kb(dates: list[str]) -> InlineKeyboardMarkup:
+    """Кнопки только с датами, на которые есть брони."""
+    kb = InlineKeyboardBuilder()
+    for d in sorted(dates):
+        kb.button(text=format_date_display(d), callback_data=f"adm_bookings_date:{d}")
+    kb.adjust(1)
+    return kb.as_markup()
