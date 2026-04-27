@@ -177,45 +177,35 @@ async def save_name(m: Message, state: FSMContext):
     name = m.text.strip()
     if len(name) < 2: return await m.answer("⚠️ Имя должно содержать минимум 2 символа.")
     await state.update_data(client_name=name)
+
+    # 🔒 Всё в одной сессии: поиск -> создание/обновление -> коммит
     async with async_session() as s:
-        user = await get_user(m.from_user.id)
-        if not user: s.add(User(tg_id=m.from_user.id, username=m.from_user.username, client_name=name))
-        else: user.client_name = name
+        user = (await s.execute(select(User).where(User.tg_id == m.from_user.id))).scalar_one_or_none()
+        if not user:
+            s.add(User(tg_id=m.from_user.id, username=m.from_user.username, client_name=name))
+        else:
+            user.client_name = name
         await s.commit()
+
     await state.set_state(BookFSM.phone)
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="⬅️ Назад к имени", callback_data="back_to_name"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
-    )
-    await m.answer("📞 **Шаг 4/5:** Введите номер телефона:", reply_markup=kb.as_markup())
+    await m.answer("📞 **Шаг 4/5:** Введите номер телефона:", reply_markup=back_cancel_kb("back_to_name"))
 
 @router.message(BookFSM.phone)
 async def save_phone(m: Message, state: FSMContext):
-    if not validate_phone(m.text.strip()): return await m.answer("⚠️ Некорректный номер. Введите только цифры, +, -, пробелы (мин. 7 цифр).")
-    await state.update_data(phone=m.text.strip())
-    async with async_session() as s:
-        user = await get_user(m.from_user.id)
-        if not user: s.add(User(tg_id=m.from_user.id, username=m.from_user.username, phone=m.text.strip()))
-        else: user.phone = m.text.strip()
-        await s.commit()
-    await _show_services(m, state)
+    phone = m.text.strip()
+    if not validate_phone(phone):
+        return await m.answer("⚠️ Некорректный номер. Введите только цифры, +, -, пробелы (мин. 7 цифр).")
+    await state.update_data(phone=phone)
 
-async def _show_services(event, state: FSMContext):
-    await state.set_state(BookFSM.services)
-    await state.update_data(selected_services=[])
     async with async_session() as s:
-        svcs = (await s.execute(select(Service).where(Service.is_active))).scalars().all()
-    
-    kb = InlineKeyboardBuilder()
-    for svc in svcs: kb.button(text=f"{svc.name} ({int(svc.price)}₽)", callback_data=f"book_svc:{svc.id}")
-    kb.button(text="✅ Завершить выбор", callback_data="book_svcs_done")
-    kb.adjust(2)
-    kb.row(
-        InlineKeyboardButton(text="⬅️ Назад к телефону", callback_data="back_to_phone"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
-    )
-    await event.answer("🛠 **Шаг 5/5:** Выберите доп. услуги (или 'Завершить'):", reply_markup=kb.as_markup(), parse_mode="Markdown")
+        user = (await s.execute(select(User).where(User.tg_id == m.from_user.id))).scalar_one_or_none()
+        if not user:
+            s.add(User(tg_id=m.from_user.id, username=m.from_user.username, phone=phone))
+        else:
+            user.phone = phone
+        await s.commit()
+
+    await _go_to_services(m, state)
 
 @router.callback_query(F.data.startswith("book_svc:") | (F.data == "book_svcs_done"))
 async def manage_services(cb: CallbackQuery, state: FSMContext):
