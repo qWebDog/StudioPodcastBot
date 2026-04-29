@@ -25,6 +25,18 @@ class BookFSM(StatesGroup):
     phone = State()
     services = State()
 
+@router.callback_query(F.data == "view_price")
+async def go_price(cb: CallbackQuery):
+    price_text = (
+        "💰 ПРАЙС-ЛИСТ\n\n"
+        "🎙️ Аренда — 2000₽/час\n\n"
+        "📹 1 Камера — 3000₽/час\n"
+        "   2 Камеры — 3500₽/час\n"
+        "   3 Камеры — 4000₽/час\n\n"
+        "🎬 Монтаж — 5000₽/час исходного материала"
+    )
+    await cb.answer(price_text, show_alert=True)
+
 # 🔄 Единый переключатель меню
 async def switch_view(cb: CallbackQuery, view: str):
     text = ""
@@ -33,16 +45,7 @@ async def switch_view(cb: CallbackQuery, view: str):
     if view == "main":
         text = "🎙️ Добро пожаловать в студию подкастов! Выберите нужное действие:"
         kb = client_main_kb()
-    elif view == "price":
-        text = (
-            "💰 **Прайс-лист:**\n\n"
-            "🎙️ **Звукозапись**\n   └ 1500₽/час\n\n"
-            "📹 **Видеосъёмка:**\n"
-            "   • 1 камера — 500₽/час\n"
-            "   • 2 камеры — 1000₽/час\n"
-            "   • 3 камеры — 1500₽/час\n\n"
-            "🎬 **Монтаж**\n   └ 5000₽"
-        )
+        
     elif view == "contact":
         text = (
             "📞 **Связь с администратором:**\n"
