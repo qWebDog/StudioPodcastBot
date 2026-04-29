@@ -385,21 +385,42 @@ async def back_to_services(cb: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "my_bookings")
 async def show_my_bookings(cb: CallbackQuery):
-    async with async_session() as s:
-        res = await s.execute(select(Booking).where(Booking.user_tg_id == cb.from_user.id).order_by(Booking.created_at.desc()).limit(10))
-        bookings = res.scalars().all()
-    if not bookings: await cb.message.answer("📭 У вас пока нет записей."); await cb.answer(); return
+    today = datetime.now().date().strftime("%Y-%m-%d")
     
-    msg = "📋 **Ваши записи:**\n"; kb = InlineKeyboardBuilder()
-    for b in bookings:
+    async with async_session() as s:
+        res = await s.execute(
+            select(Booking)
+            .where(Booking.user_tg_id == cb.from_user.id)
+            .order_by(Booking.created_at.desc())
+            .limit(20)
+        )
+        all_bookings = res.scalars().all()
+
+    active_bookings = []
+    for b in all_bookings:
         _, slots, _ = await get_booking_details(b.id)
         if not slots: continue
+        
+        # 🔥 Фильтр: показываем только сегодня/будущее + активный статус
+        slot_date = slots[0].date
+        if slot_date >= today and b.status in ["confirmed", "confirmed_reminder"]:
+            active_bookings.append((b, slots))
+
+    if not active_bookings:
+        await cb.message.answer("📭 У вас нет активных записей на сегодня или в будущем.")
+        await cb.answer()
+        return
+
+    msg = "📋 **Ваши активные записи:**\n"
+    kb = InlineKeyboardBuilder()
+    
+    for b, slots in active_bookings:
         times = " | ".join([f"{sl.start_time}-{sl.end_time}" for sl in slots])
-        st = "🟢" if b.status == "confirmed" else "❌"
-        msg += f"\n{st} #{b.id} | {format_date_display(slots[0].date)} ⏰ {times}\n💰 {int(b.total_price)}₽"
-        if b.status == "confirmed": kb.button(text=f"Отменить #{b.id}", callback_data=f"my_cancel:{b.id}")
-    if kb.buttons: kb.adjust(1); await cb.message.answer(msg, parse_mode="Markdown", reply_markup=kb.as_markup())
-    else: await cb.message.answer(msg, parse_mode="Markdown")
+        msg += f"\n🟢 #{b.id} | {format_date_display(slots[0].date)} ⏰ {times}\n💰 {int(b.total_price)}₽"
+        kb.button(text=f"Отменить #{b.id}", callback_data=f"my_cancel:{b.id}")
+
+    kb.adjust(1)
+    await cb.message.answer(msg, parse_mode="Markdown", reply_markup=kb.as_markup())
     await cb.answer()
 
 @router.callback_query(F.data.startswith("my_cancel:"))
