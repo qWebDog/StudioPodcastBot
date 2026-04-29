@@ -9,7 +9,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select, func
 from database import async_session, User, Slot, Service, Booking, get_user, validate_phone, get_booking_details
-from keyboards import welcome_kb, dates_kb, months_kb, time_slots_kb, services_kb, confirm_kb, format_date_display, back_cancel_kb
+from keyboards import welcome_kb, dates_kb, months_kb, time_slots_kb, services_kb, confirm_kb, format_date_display, back_cancel_kb, MONTH_NAMES
 from config import ADMIN_IDS
 from zoneinfo import ZoneInfo
 
@@ -60,8 +60,7 @@ async def _show_months(event, state: FSMContext, is_callback: bool = False):
     # Группируем даты по месяцам (YYYY-MM)
     months_dict = {}
     for d in dates:
-        ym = d[:7]
-        months_dict.setdefault(ym, []).append(d)
+        months_dict.setdefault(d[:7], []).append(d)
     months = sorted(months_dict.keys())
 
     if not months:
@@ -72,8 +71,17 @@ async def _show_months(event, state: FSMContext, is_callback: bool = False):
 
     await state.set_state(BookFSM.month)
     txt = "📅 **Шаг 1/6:** Выберите месяц:"
-    if is_callback: await event.message.answer(txt, reply_markup=months_kb(months), parse_mode="Markdown")
-    else: await event.answer(txt, reply_markup=months_kb(months), parse_mode="Markdown")
+
+    # 🆕 Собираем клавиатуру с кнопкой "Назад"
+    kb = InlineKeyboardBuilder()
+    for ym in months:
+        year, month = ym.split("-")
+        kb.button(text=f"{MONTH_NAMES[month]} {year}", callback_data=f"book_month:{ym}")
+    kb.adjust(1)
+    kb.row(InlineKeyboardButton(text="⬅️ В главное меню", callback_data="main_menu"))
+
+    if is_callback: await event.message.answer(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    else: await event.answer(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("book_month:"))
 async def select_month(cb: CallbackQuery, state: FSMContext):
