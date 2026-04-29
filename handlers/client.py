@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select, func
 from database import async_session, User, Slot, Service, Booking, get_user, validate_phone, get_booking_details
