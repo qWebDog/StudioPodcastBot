@@ -25,19 +25,7 @@ class BookFSM(StatesGroup):
     phone = State()
     services = State()
 
-@router.callback_query(F.data == "view_price")
-async def go_price(cb: CallbackQuery):
-    price_text = (
-        "💰 ПРАЙС-ЛИСТ\n\n"
-        "🎙️ Аренда — 2000₽/час\n\n"
-        "📹 1 Камера — 3000₽/час\n"
-        "   2 Камеры — 3500₽/час\n"
-        "   3 Камеры — 4000₽/час\n\n"
-        "🎬 Монтаж — 5000₽/час исходного материала"
-    )
-    await cb.answer(price_text, show_alert=True)
-
-# 🔄 Единый переключатель меню
+# 🔄 Единый переключатель меню (обновляет одно сообщение)
 async def switch_view(cb: CallbackQuery, view: str):
     text = ""
     kb = back_to_menu_kb()
@@ -45,7 +33,6 @@ async def switch_view(cb: CallbackQuery, view: str):
     if view == "main":
         text = "🎙️ Добро пожаловать в студию подкастов! Выберите нужное действие:"
         kb = client_main_kb()
-        
     elif view == "contact":
         text = (
             "📞 **Связь с администратором:**\n"
@@ -97,9 +84,16 @@ async def go_main(cb: CallbackQuery):
     await cb.answer()
 
 @router.callback_query(F.data == "view_price")
-async def go_price(cb: CallbackQuery): 
-    await switch_view(cb, "price")
-    await cb.answer()
+async def go_price(cb: CallbackQuery):
+    price_text = (
+        "💰 ПРАЙС-ЛИСТ\n\n"
+        "🎙️ Аренда — 2000₽/час\n\n"
+        "📹 1 Камера — 3000₽/час\n"
+        "   2 Камеры — 3500₽/час\n"
+        "   3 Камеры — 4000₽/час\n\n"
+        "🎬 Монтаж — 5000₽/час исходного материала"
+    )
+    await cb.answer(price_text, show_alert=True)
 
 @router.callback_query(F.data == "view_contact")
 async def go_contact(cb: CallbackQuery): 
@@ -204,7 +198,8 @@ async def select_date(cb: CallbackQuery, state: FSMContext):
         for sl in all_slots:
             slot_dt = datetime.strptime(f"{date_iso} {sl.start_time}", "%Y-%m-%d %H:%M").replace(tzinfo=STUDIO_TZ)
             if slot_dt >= threshold: slots.append(sl)
-    else: slots = all_slots
+    else: 
+        slots = all_slots
 
     if not slots:
         txt = "❌ На эту дату нет доступных часов."
@@ -432,7 +427,12 @@ async def manage_services(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "back_to_phone")
 async def back_to_phone(cb: CallbackQuery, state: FSMContext): 
     await state.set_state(BookFSM.phone)
-    await cb.answer("📞 Введите номер телефона:")
+    kb = InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="⬅️ Назад к имени", callback_data="back_to_name"), 
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    await cb.message.edit_text("📞 Введите номер телефона:", reply_markup=kb.as_markup())
+    await cb.answer()
 
 @router.callback_query(F.data == "back_to_services")
 async def back_to_services(cb: CallbackQuery, state: FSMContext): 
@@ -500,7 +500,7 @@ async def my_cancel(cb: CallbackQuery):
     await switch_view(cb, "bookings")
     await _notify_admins(cb.bot, b, "cancelled")
 
-# 🔔 Напоминания (ИСПРАВЛЕНО)
+# 🔔 Напоминания (ИСПРАВЛЕНО: строгие отступы)
 @router.callback_query(F.data.startswith("rem_confirm:") | F.data.startswith("rem_cancel:"))
 async def handle_reminder(cb: CallbackQuery):
     action, bid_str = cb.data.split(":")
@@ -532,9 +532,9 @@ async def handle_reminder(cb: CallbackQuery):
         pass
     await cb.answer()
     await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
-    
-# 📢 Уведомления (ИСПРАВЛЕНО)
-async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
+
+# 📢 Уведомления
+async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list, total_price: float):
     msg = (
         f"🆕 **Новая бронь #{booking_id}**\n"
         f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
@@ -543,8 +543,10 @@ async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, tota
         f"💰 {int(total_price)}₽"
     )
     for aid in ADMIN_IDS:
-        try: await bot.send_message(aid, msg, parse_mode="Markdown")
-        except Exception as e: logger.error(f"Notify fail {aid}: {e}")
+        try:
+            await bot.send_message(aid, msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Notify fail {aid}: {e}")
         await asyncio.sleep(0.3)
 
 async def _notify_admins(bot, booking, action):
@@ -552,6 +554,8 @@ async def _notify_admins(bot, booking, action):
     tag = f"@{user.username}" if user and user.username else f"ID:{booking.user_tg_id}"
     msg = f"{'✅' if action == 'confirmed' else '❌'} Клиент {tag} ответил.\n🆔 Бронь #{booking.id}"
     for aid in ADMIN_IDS:
-        try: await bot.send_message(aid, msg)
-        except Exception as e: logger.error(f"Admin notify fail {aid}: {e}")
+        try:
+            await bot.send_message(aid, msg)
+        except Exception as e:
+            logger.error(f"Admin notify fail {aid}: {e}")
         await asyncio.sleep(0.3)
