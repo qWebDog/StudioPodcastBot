@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select, func
 from database import async_session, User, Slot, Service, Booking, get_user, validate_phone, get_booking_details
@@ -25,7 +25,7 @@ class BookFSM(StatesGroup):
     phone = State()
     services = State()
 
-# 🔄 Единый переключатель меню (обновляет одно сообщение)
+# 🔄 Единый переключатель меню
 async def switch_view(cb: CallbackQuery, view: str):
     text = ""
     kb = back_to_menu_kb()
@@ -157,8 +157,11 @@ async def _show_months(event, state: FSMContext, is_callback: bool = False):
 async def select_month(cb: CallbackQuery, state: FSMContext):
     ym = cb.data.split(":")[1]
     await state.update_data(year_month=ym)
+    await _show_dates_for_month(ym, cb, state)
+    await cb.answer()
+
+async def _show_dates_for_month(ym: str, event: CallbackQuery, state: FSMContext):
     await state.set_state(BookFSM.date)
-    
     async with async_session() as s:
         res = await s.execute(
             select(Slot.date).where(
@@ -171,12 +174,10 @@ async def select_month(cb: CallbackQuery, state: FSMContext):
 
     if not dates:
         kb = InlineKeyboardBuilder().button(text="⬅️ Назад к месяцам", callback_data="back_to_months")
-        await cb.message.answer("❌ В этом месяце нет свободных дней.", reply_markup=kb.as_markup())
-        await cb.answer()
+        await event.message.answer("❌ В этом месяце нет свободных дней.", reply_markup=kb.as_markup())
         return
 
-    await cb.message.answer("📆 **Шаг 2/6:** Выберите дату:", reply_markup=dates_kb(dates), parse_mode="Markdown")
-    await cb.answer()
+    await event.message.answer("📆 **Шаг 2/6:** Выберите дату:", reply_markup=dates_kb(dates), parse_mode="Markdown")
 
 @router.callback_query(F.data == "back_to_months")
 async def back_to_months(cb: CallbackQuery, state: FSMContext): 
@@ -238,8 +239,10 @@ async def select_date(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "back_to_date")
 async def back_to_date(cb: CallbackQuery, state: FSMContext):
     ym = (await state.get_data()).get("year_month")
-    if ym: await select_month(cb, state)
-    else: await _show_months(cb, state, is_callback=True)
+    if ym:
+        await _show_dates_for_month(ym, cb, state)
+    else:
+        await _show_months(cb, state, is_callback=True)
     await cb.answer()
 
 @router.callback_query(F.data.startswith("slot_toggle:"))
@@ -503,7 +506,7 @@ async def my_cancel(cb: CallbackQuery):
     await switch_view(cb, "bookings")
     await _notify_admins(cb.bot, b, "cancelled")
 
-# 🔔 Напоминания (ИСПРАВЛЕНО: строгие отступы)
+# 🔔 Напоминания
 @router.callback_query(F.data.startswith("rem_confirm:") | F.data.startswith("rem_cancel:"))
 async def handle_reminder(cb: CallbackQuery):
     action, bid_str = cb.data.split(":")
@@ -537,7 +540,7 @@ async def handle_reminder(cb: CallbackQuery):
     await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
 
 # 📢 Уведомления
-async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list, total_price: float):
+async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
     msg = (
         f"🆕 **Новая бронь #{booking_id}**\n"
         f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
