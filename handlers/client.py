@@ -45,9 +45,17 @@ async def contact_admin(cb: CallbackQuery):
     await cb.answer()
 
 async def _show_dates(event, state: FSMContext, is_callback: bool = False):
+    today = datetime.now().date().strftime("%Y-%m-%d")
+    
     async with async_session() as s:
-        res = await s.execute(select(Slot.date).where(Slot.is_active, ~Slot.is_booked).distinct())
+        res = await s.execute(
+            select(Slot.date)
+            .where(Slot.is_active, ~Slot.is_booked, Slot.date >= today)
+            .distinct()
+            .order_by(Slot.date)  # ✅ Сортируем от ближайших к дальним
+        )
         dates = [r[0] for r in res]
+        
     if not dates:
         txt = "❌ Свободных дат пока нет. Попробуйте позже или свяжитесь с админом."
         if is_callback: await event.message.answer(txt)
@@ -58,7 +66,7 @@ async def _show_dates(event, state: FSMContext, is_callback: bool = False):
     txt = "📅 **Шаг 1/5:** Выберите удобную дату:"
     if is_callback: await event.message.answer(txt, reply_markup=dates_kb(dates), parse_mode="Markdown")
     else: await event.answer(txt, reply_markup=dates_kb(dates), parse_mode="Markdown")
-
+        
 @router.callback_query(F.data.startswith("book_date:"))
 async def select_date(cb: CallbackQuery, state: FSMContext):
     date_iso = cb.data.split(":")[1]
