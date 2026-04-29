@@ -214,7 +214,7 @@ async def _show_services(event, state: FSMContext):
     kb = InlineKeyboardBuilder()
     for svc in svcs: kb.button(text=f"{svc.name} ({int(svc.price)}₽)", callback_data=f"book_svc:{svc.id}")
     kb.button(text="✅ Завершить выбор", callback_data="book_svcs_done")
-    kb.adjust(2)
+    kb.adjust(1)
     kb.row(
         InlineKeyboardButton(text="⬅️ Назад к телефону", callback_data="back_to_phone"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
