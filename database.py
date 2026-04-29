@@ -56,8 +56,8 @@ async def get_user(tg_id: int) -> User | None:
         return (await s.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
 
 def validate_phone(phone: str) -> bool:
-    digits = re.sub(r'\D', '', phone)
-    return 7 <= len(digits) <= 15
+    """Принимает строго формат +7XXXXXXXXXX (ровно 12 символов)"""
+    return bool(re.fullmatch(r'\+7\d{10}', phone.strip()))
 
 async def get_booking_details(booking_id: int):
     async with async_session() as s:
