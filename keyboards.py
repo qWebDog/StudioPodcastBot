@@ -31,6 +31,8 @@ def back_cancel_kb(back_cb: str) -> InlineKeyboardMarkup:
 # 👤 Клиент
 def welcome_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="💰 Прайс", callback_data="price_list")
+    ).row(
         InlineKeyboardButton(text="📅 Забронировать запись", callback_data="book_start")
     ).row(
         InlineKeyboardButton(text="📋 Мои записи", callback_data="my_bookings"),
