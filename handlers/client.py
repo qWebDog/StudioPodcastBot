@@ -86,12 +86,15 @@ async def go_main(cb: CallbackQuery):
 @router.callback_query(F.data == "view_price")
 async def go_price(cb: CallbackQuery):
     price_text = (
-        "💰 ПРАЙС-ЛИСТ\n\n"
-        "🎙️ Аренда — 2000₽/час\n\n"
-        "📹 1 Камера — 3000₽/час\n"
-        "   2 Камеры — 3500₽/час\n"
-        "   3 Камеры — 4000₽/час\n\n"
-        "🎬 Монтаж — 5000₽/час исходного материала"
+        "ПРАЙС\n\n"
+        "🎙️\n"
+        "Аренда — 2000₽/час\n\n"
+        "📹\n"
+        "1 Камера — 3000₽/час\n"
+        "2 Камеры — 3500₽/час\n"
+        "3 Камеры — 4000₽/час\n\n"
+        "🎬\n"
+        "Монтаж — 5000₽/час исходного материала"
     )
     await cb.answer(price_text, show_alert=True)
 
