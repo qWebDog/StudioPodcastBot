@@ -283,6 +283,39 @@ async def confirm_booking(cb: CallbackQuery, state: FSMContext):
         s.add(new_booking)
         await s.commit()
 
+    @router.callback_query(F.data.startswith("rem_confirm:") | F.data.startswith("rem_cancel:"))
+async def handle_reminder(cb: CallbackQuery):
+    action, bid_str = cb.data.split(":")
+    bid = int(bid_str)
+
+    async with async_session() as s:
+        b = await s.get(Booking, bid)
+        if not b or b.status != "confirmed":
+            return await cb.answer("⛔ Бронь уже изменена или не найдена.", show_alert=True)
+
+        if cb.from_user.id != b.user_tg_id and cb.from_user.id not in ADMIN_IDS:
+            return await cb.answer("⛔ Это не ваша бронь.", show_alert=True)
+
+        if action == "rem_confirm":
+            b.status = "confirmed_reminder"
+            answer_text = "✅ Запись подтверждена! Ждём вас."
+        else:
+            b.status = "cancelled"
+            answer_text = "❌ Запись отменена. Слоты освобождены."
+            # Освобождаем все слоты брони
+            for sid in json.loads(b.slot_ids):
+                sl = await s.get(Slot, sid)
+                if sl: sl.is_booked = False
+
+        await s.commit()
+
+    try:
+        await cb.message.edit_text(f"{answer_text}\n🆔 Бронь #{bid}")
+    except Exception:
+        pass
+    await cb.answer()
+    await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
+
     await _notify_new_booking(cb.bot, new_booking.id, data, times_str, total_price)
 
     await cb.message.answer(f"✅ Бронь на {format_date_display(data['date'])} создана! Сумма: {int(total_price)}₽. За 2 часа пришлём напоминание.")
