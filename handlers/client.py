@@ -36,6 +36,21 @@ async def start_booking(cb: CallbackQuery, state: FSMContext):
     await _show_months(cb, state, is_callback=True)
     await cb.answer()
 
+@router.callback_query(F.data == "price_list")
+async def show_price_list(cb: CallbackQuery):
+    price_text = (
+        "💰 **Прайс-лист:**\n\n"
+        "🎙️ **Звукозапись**\n"
+        "   └ 1500₽/час\n\n"
+        "📹 **Видеосъёмка:**\n"
+        "   • 1 камера — 500₽/час\n"
+        "   • 2 камеры — 1000₽/час\n"
+        "   • 3 камеры — 1500₽/час\n\n"
+        "🎬 **Монтаж**\n"
+        "   └ 5000₽"
+    )
+    await cb.answer(price_text, show_alert=True)
+
 @router.callback_query(F.data == "contact_admin")
 async def contact_admin(cb: CallbackQuery):
     msg = (
