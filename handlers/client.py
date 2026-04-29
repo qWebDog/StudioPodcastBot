@@ -283,6 +283,10 @@ async def confirm_booking(cb: CallbackQuery, state: FSMContext):
         s.add(new_booking)
         await s.commit()
 
+    await _notify_new_booking(cb.bot, new_booking.id, data, times_str, total_price)
+    await cb.message.answer(f"✅ Бронь на {format_date_display(data['date'])} создана! Сумма: {int(total_price)}₽. За 2 часа пришлём напоминание.")
+    await state.clear(); await cb.answer()
+
 @router.callback_query(F.data.startswith("rem_confirm:") | F.data.startswith("rem_cancel:"))
 async def handle_reminder(cb: CallbackQuery):
     action, bid_str = cb.data.split(":")
@@ -302,11 +306,9 @@ async def handle_reminder(cb: CallbackQuery):
         else:
             b.status = "cancelled"
             answer_text = "❌ Запись отменена. Слоты освобождены."
-            # Освобождаем все слоты брони
             for sid in json.loads(b.slot_ids):
                 sl = await s.get(Slot, sid)
                 if sl: sl.is_booked = False
-
         await s.commit()
 
     try:
@@ -315,11 +317,6 @@ async def handle_reminder(cb: CallbackQuery):
         pass
     await cb.answer()
     await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
-
-    await _notify_new_booking(cb.bot, new_booking.id, data, times_str, total_price)
-
-    await cb.message.answer(f"✅ Бронь на {format_date_display(data['date'])} создана! Сумма: {int(total_price)}₽. За 2 часа пришлём напоминание.")
-    await state.clear(); await cb.answer()
 
 @router.callback_query(F.data == "book_cancel")
 async def cancel_booking(cb: CallbackQuery, state: FSMContext):
