@@ -25,7 +25,7 @@ class BookFSM(StatesGroup):
     phone = State()
     services = State()
 
-# 🔄 Единый переключатель меню
+# 🔄 Единый переключатель меню (обновляет одно сообщение)
 async def switch_view(cb: CallbackQuery, view: str):
     text = ""
     kb = back_to_menu_kb()
@@ -86,6 +86,7 @@ async def go_main(cb: CallbackQuery):
 @router.callback_query(F.data == "view_price")
 async def go_price(cb: CallbackQuery):
     price_text = (
+        "ПРАЙС\n\n"
         "🎙️\n"
         "Аренда — 2000₽/час\n\n"
         "📹\n"
@@ -340,13 +341,22 @@ async def save_name(m: Message, state: FSMContext):
 @router.message(BookFSM.phone)
 async def save_phone(m: Message, state: FSMContext):
     phone = m.text.strip()
-    if not validate_phone(phone): return await m.answer("⚠️ Некорректный номер.")
+    if not validate_phone(phone):
+        return await m.answer(
+            "⚠️ Неверный формат.\n"
+            "Введите номер строго так: `+79991111111`",
+            parse_mode="Markdown"
+        )
+    
     await state.update_data(phone=phone)
     async with async_session() as s:
         user = (await s.execute(select(User).where(User.tg_id == m.from_user.id))).scalar_one_or_none()
-        if not user: s.add(User(tg_id=m.from_user.id, username=m.from_user.username, phone=phone))
-        else: user.phone = phone
+        if not user:
+            s.add(User(tg_id=m.from_user.id, username=m.from_user.username, phone=phone))
+        else:
+            user.phone = phone
         await s.commit()
+        
     await _show_services(m, state)
 
 @router.callback_query(F.data == "back_to_slots")
@@ -539,7 +549,7 @@ async def handle_reminder(cb: CallbackQuery):
     await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
 
 # 📢 Уведомления
-async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list, total_price: float):
+async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
     msg = (
         f"🆕 **Новая бронь #{booking_id}**\n"
         f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
