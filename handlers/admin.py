@@ -239,11 +239,13 @@ async def proc_broadcast(m: Message, state: FSMContext):
 # ==================== БРОНИ ПО ДАТЕ (только с бронями) ====================
 @router.callback_query(F.data == "admin_bookings_by_date", F.from_user.id.in_(ADMIN_IDS))
 async def start_bookings_by_date(cb: CallbackQuery):
+    today = datetime.now().date().strftime("%Y-%m-%d")
+    
     async with async_session() as s:
-        # Берём только те даты, у которых есть забронированные слоты
+        # 🔥 Фильтр: только сегодня и будущие даты
         res = await s.execute(
             select(Slot.date)
-            .where(Slot.is_booked == True)
+            .where(Slot.is_booked == True, Slot.date >= today)
             .distinct()
             .order_by(Slot.date.desc())
         )
@@ -251,7 +253,7 @@ async def start_bookings_by_date(cb: CallbackQuery):
     
     if not dates:
         return await cb.message.answer(
-            "📭 Пока нет активных броней ни на одну дату.",
+            "📭 Пока нет активных броней на сегодня или ближайшие дни.",
             reply_markup=InlineKeyboardBuilder().button(text="🔙 В меню", callback_data="admin_menu").as_markup()
         )
     
