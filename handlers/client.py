@@ -44,7 +44,8 @@ async def contact_admin(cb: CallbackQuery):
         "🕒 График: 10:00 – 22:00 (МСК)\n"
         "Отвечаем в течение 15 минут."
     )
-    await cb.message.answer(msg, parse_mode="Markdown")
+    kb = InlineKeyboardBuilder().button(text="⬅️ В главное меню", callback_data="main_menu")
+    await cb.message.answer(msg, reply_markup=kb.as_markup(), parse_mode="Markdown")
     await cb.answer()
 
 async def _show_dates(event, state: FSMContext, is_callback: bool = False):
@@ -414,40 +415,32 @@ async def back_to_services(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "my_bookings")
 async def show_my_bookings(cb: CallbackQuery):
     today = datetime.now().date().strftime("%Y-%m-%d")
-    
     async with async_session() as s:
-        res = await s.execute(
-            select(Booking)
-            .where(Booking.user_tg_id == cb.from_user.id)
-            .order_by(Booking.created_at.desc())
-            .limit(20)
-        )
+        res = await s.execute(select(Booking).where(Booking.user_tg_id == cb.from_user.id).order_by(Booking.created_at.desc()).limit(20))
         all_bookings = res.scalars().all()
 
     active_bookings = []
     for b in all_bookings:
         _, slots, _ = await get_booking_details(b.id)
         if not slots: continue
-        
-        # 🔥 Фильтр: показываем только сегодня/будущее + активный статус
-        slot_date = slots[0].date
-        if slot_date >= today and b.status in ["confirmed", "confirmed_reminder"]:
+        if slots[0].date >= today and b.status in ["confirmed", "confirmed_reminder"]:
             active_bookings.append((b, slots))
 
     if not active_bookings:
-        await cb.message.answer("📭 У вас нет активных записей на сегодня или в будущем.")
+        kb = InlineKeyboardBuilder().button(text="⬅️ В главное меню", callback_data="main_menu")
+        await cb.message.answer("📭 У вас нет активных записей на сегодня или в будущем.", reply_markup=kb.as_markup())
         await cb.answer()
         return
 
     msg = "📋 **Ваши активные записи:**\n"
     kb = InlineKeyboardBuilder()
-    
     for b, slots in active_bookings:
         times = " | ".join([f"{sl.start_time}-{sl.end_time}" for sl in slots])
         msg += f"\n🟢 #{b.id} | {format_date_display(slots[0].date)} ⏰ {times}\n💰 {int(b.total_price)}₽"
         kb.button(text=f"Отменить #{b.id}", callback_data=f"my_cancel:{b.id}")
-
     kb.adjust(1)
+    kb.button(text="⬅️ В главное меню", callback_data="main_menu")  # 🆕 Кнопка назад
+    
     await cb.message.answer(msg, parse_mode="Markdown", reply_markup=kb.as_markup())
     await cb.answer()
 
@@ -499,3 +492,9 @@ async def _notify_admins(bot, booking, action):
         try: await bot.send_message(aid, msg, parse_mode="Markdown")
         except Exception as e: logger.error(f"Admin notify fail {aid}: {e}")
         await asyncio.sleep(0.3)
+
+@router.callback_query(F.data == "main_menu")
+async def go_to_main_menu(cb: CallbackQuery, state: FSMContext):
+    await state.clear()  # Сбрасываем зависшие состояния бронирования
+    await cb.message.answer("🎙️ Добро пожаловать в студию подкастов! Выберите нужное действие:", reply_markup=welcome_kb())
+    await cb.answer()
