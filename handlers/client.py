@@ -490,8 +490,10 @@ async def handle_reminder(cb: CallbackQuery):
     
     async with async_session() as s:
         b = await s.get(Booking, bid)
-        if not b or b.status != "confirmed": return await cb.answer("⛔ Бронь уже изменена.", show_alert=True)
-        if cb.from_user.id != b.user_tg_id and cb.from_user.id not in ADMIN_IDS: return await cb.answer("⛔ Это не ваша бронь.", show_alert=True)
+        if not b or b.status != "confirmed":
+            return await cb.answer("⛔ Бронь уже изменена.", show_alert=True)
+        if cb.from_user.id != b.user_tg_id and cb.from_user.id not in ADMIN_IDS:
+            return await cb.answer("⛔ Это не ваша бронь.", show_alert=True)
 
         if action == "rem_confirm":
             b.status = "confirmed_reminder"
@@ -499,17 +501,20 @@ async def handle_reminder(cb: CallbackQuery):
         else:
             b.status = "cancelled"
             txt = "❌ Запись отменена."
-            for sid in json.loads(b.slot_ids):
+            slot_ids = json.loads(b.slot_ids)
+            for sid in slot_ids:
                 sl = await s.get(Slot, sid)
-                if sl: sl.is_booked = False
+                if sl:
+                    sl.is_booked = False
         await s.commit()
-    
+
     try:
         await cb.message.edit_text(f"{txt}\n🆔 Бронь #{bid}")
-    except: pass
+    except Exception:
+        pass
     await cb.answer()
     await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
-
+    
 # 📢 Уведомления (ИСПРАВЛЕНО)
 async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
     msg = (
