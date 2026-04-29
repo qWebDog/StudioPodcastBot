@@ -60,9 +60,10 @@ def time_slots_kb(slots: list, selected_ids: list[int]) -> InlineKeyboardMarkup:
 
 def services_kb(svcs: list) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    for s in svcs: kb.button(text=f"{s.name} ({int(s.price)}₽)", callback_data=f"book_svc:{s.id}")
+    for s in svcs:
+        kb.button(text=f"{s.name} ({int(s.price)}₽)", callback_data=f"book_svc:{s.id}")
     kb.button(text="✅ Завершить выбор", callback_data="book_svcs_done")
-    kb.adjust(2)
+    kb.adjust(1)  # 👈 1 кнопка на строку
     return kb.as_markup()
 
 def confirm_kb() -> InlineKeyboardMarkup:
