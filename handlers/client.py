@@ -9,7 +9,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select, func
 from database import async_session, User, Slot, Service, Booking, get_user, validate_phone, get_booking_details
-from keyboards import welcome_kb, dates_kb, time_slots_kb, services_kb, confirm_kb, format_date_display, back_cancel_kb
+from keyboards import welcome_kb, dates_kb, months_kb, time_slots_kb, services_kb, confirm_kb, format_date_display, back_cancel_kb
 from config import ADMIN_IDS
 from zoneinfo import ZoneInfo
 
