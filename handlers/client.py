@@ -33,7 +33,7 @@ async def cmd_start(m: Message, state: FSMContext):
 
 @router.callback_query(F.data == "book_start")
 async def start_booking(cb: CallbackQuery, state: FSMContext):
-    await _show_dates(cb, state, is_callback=True)
+    await _show_months(cb, state, is_callback=True)
     await cb.answer()
 
 @router.callback_query(F.data == "contact_admin")
