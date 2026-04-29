@@ -283,7 +283,7 @@ async def confirm_booking(cb: CallbackQuery, state: FSMContext):
         s.add(new_booking)
         await s.commit()
 
-    @router.callback_query(F.data.startswith("rem_confirm:") | F.data.startswith("rem_cancel:"))
+@router.callback_query(F.data.startswith("rem_confirm:") | F.data.startswith("rem_cancel:"))
 async def handle_reminder(cb: CallbackQuery):
     action, bid_str = cb.data.split(":")
     bid = int(bid_str)
