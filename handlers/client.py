@@ -128,9 +128,16 @@ async def _show_months(event, state: FSMContext, is_callback: bool = False):
     months = sorted(months_dict.keys())
 
     if not months:
-        txt = "❌ Свободных дат пока нет. Попробуйте позже или свяжитесь с админом."
-        if is_callback: await event.message.answer(txt)
-        else: await event.answer(txt)
+        txt = "❌ Свободных дат пока нет. Попробуйте позже."
+        kb = InlineKeyboardBuilder()
+        kb.row(InlineKeyboardButton(text="📞 Связаться с админом", callback_data="view_contact"))
+        kb.row(InlineKeyboardButton(text="⬅️ В главное меню", callback_data="view_main"))
+        
+        if is_callback:
+            try: await event.message.edit_text(txt, reply_markup=kb.as_markup())
+            except: await event.message.answer(txt, reply_markup=kb.as_markup())
+        else:
+            await event.answer(txt)
         await state.clear()
         return
 
@@ -143,8 +150,11 @@ async def _show_months(event, state: FSMContext, is_callback: bool = False):
     kb.adjust(1)
     kb.row(InlineKeyboardButton(text="⬅️ В главное меню", callback_data="view_main"))
     
-    if is_callback: await event.message.answer(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
-    else: await event.answer(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    if is_callback: 
+        try: await event.message.edit_text(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
+        except: await event.message.answer(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    else: 
+        await event.answer(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
 
 @router.callback_query(F.data.startswith("book_month:"))
 async def select_month(cb: CallbackQuery, state: FSMContext):
@@ -194,12 +204,17 @@ async def select_date(cb: CallbackQuery, state: FSMContext):
         for sl in all_slots:
             slot_dt = datetime.strptime(f"{date_iso} {sl.start_time}", "%Y-%m-%d %H:%M").replace(tzinfo=STUDIO_TZ)
             if slot_dt >= threshold: slots.append(sl)
-    else: 
-        slots = all_slots
+    else: slots = all_slots
 
     if not slots:
-        kb = InlineKeyboardBuilder().button(text="❌ Отмена", callback_data="book_cancel")
-        await cb.message.answer("❌ Нет доступных часов для бронирования.", reply_markup=kb.as_markup())
+        txt = "❌ На эту дату нет доступных часов."
+        kb = InlineKeyboardBuilder()
+        kb.row(InlineKeyboardButton(text="⬅️ Назад к датам", callback_data="back_to_date"))
+        kb.row(InlineKeyboardButton(text="📞 Связаться с админом", callback_data="view_contact"))
+        kb.row(InlineKeyboardButton(text="🏠 В главное меню", callback_data="view_main"))
+        
+        try: await cb.message.edit_text(txt, reply_markup=kb.as_markup())
+        except: await cb.message.answer(txt, reply_markup=kb.as_markup())
         await cb.answer()
         return
 
