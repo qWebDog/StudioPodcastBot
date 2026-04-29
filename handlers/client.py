@@ -11,9 +11,12 @@ from sqlalchemy import select
 from database import async_session, User, Slot, Service, Booking, get_user, validate_phone, get_booking_details
 from keyboards import welcome_kb, dates_kb, time_slots_kb, services_kb, confirm_kb, format_date_display, back_cancel_kb
 from config import ADMIN_IDS
+rom zoneinfo import ZoneInfo
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+STUDIO_TZ = ZoneInfo("Europe/Moscow")
 
 class BookFSM(StatesGroup):
     date = State()
@@ -72,30 +75,32 @@ async def select_date(cb: CallbackQuery, state: FSMContext):
     date_iso = cb.data.split(":")[1]
     await state.update_data(date=date_iso)
 
-    now = datetime.now()
-    min_booking_dt = now + timedelta(hours=1, minutes=30)  # Запись минимум за 1.5 часа
+    now = datetime.now(STUDIO_TZ)
+    threshold = now + timedelta(hours=1, minutes=30)  # Мин. 1.5 часа до начала
 
     async with async_session() as s:
-        # Берём все свободные слоты на выбранную дату
         res = await s.execute(select(Slot).where(
-            Slot.date == date_iso,
-            Slot.is_active,
-            ~Slot.is_booked
+            Slot.date == date_iso, Slot.is_active, ~Slot.is_booked
         ).order_by(Slot.start_time))
         all_slots = res.scalars().all()
 
-    # 🔥 Фильтр времени (работает только для сегодняшней даты)
-    if date_iso == now.date().strftime("%Y-%m-%d"):
-        min_time_str = min_booking_dt.strftime("%H:%M")
-        slots = [sl for sl in all_slots if sl.start_time >= min_time_str]
+    # 🔥 Корректная фильтрация времени
+    if date_iso == now.strftime("%Y-%m-%d"):
+        slots = []
+        for sl in all_slots:
+            # Создаём datetime-объект слота в вашем часовом поясе
+            slot_dt = datetime.strptime(f"{date_iso} {sl.start_time}", "%Y-%m-%d %H:%M").replace(tzinfo=STUDIO_TZ)
+            if slot_dt >= threshold:
+                slots.append(sl)
     else:
-        # Для будущих дат все свободные слоты доступны
+        # Для будущих дат показываем все свободные слоты
         slots = all_slots
 
     if not slots:
         kb = InlineKeyboardBuilder().button(text="❌ Отмена", callback_data="book_cancel")
-        await cb.message.answer("❌ На это время нет доступных часов.", reply_markup=kb.as_markup())
-        await cb.answer(); return
+        await cb.message.answer("❌ Нет доступных часов для бронирования.", reply_markup=kb.as_markup())
+        await cb.answer()
+        return
 
     price_per_hour = int(slots[0].price)
     await state.set_state(BookFSM.slots)
@@ -117,6 +122,7 @@ async def select_date(cb: CallbackQuery, state: FSMContext):
         reply_markup=kb.as_markup(), parse_mode="Markdown"
     )
     await cb.answer()
+    
 @router.callback_query(F.data.startswith("slot_toggle:"))
 async def toggle_slot(cb: CallbackQuery, state: FSMContext):
     sid = int(cb.data.split(":")[1]); data = await state.get_data()
