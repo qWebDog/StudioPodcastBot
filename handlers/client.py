@@ -71,18 +71,36 @@ async def _show_dates(event, state: FSMContext, is_callback: bool = False):
 async def select_date(cb: CallbackQuery, state: FSMContext):
     date_iso = cb.data.split(":")[1]
     await state.update_data(date=date_iso)
+
+    now = datetime.now()
+    min_booking_dt = now + timedelta(hours=1, minutes=30)  # Запись минимум за 1.5 часа
+
     async with async_session() as s:
-        res = await s.execute(select(Slot).where(Slot.date == date_iso, Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
-        slots = res.scalars().all()
+        # Берём все свободные слоты на выбранную дату
+        res = await s.execute(select(Slot).where(
+            Slot.date == date_iso,
+            Slot.is_active,
+            ~Slot.is_booked
+        ).order_by(Slot.start_time))
+        all_slots = res.scalars().all()
+
+    # 🔥 Фильтр времени (работает только для сегодняшней даты)
+    if date_iso == now.date().strftime("%Y-%m-%d"):
+        min_time_str = min_booking_dt.strftime("%H:%M")
+        slots = [sl for sl in all_slots if sl.start_time >= min_time_str]
+    else:
+        # Для будущих дат все свободные слоты доступны
+        slots = all_slots
+
     if not slots:
         kb = InlineKeyboardBuilder().button(text="❌ Отмена", callback_data="book_cancel")
-        await cb.message.answer("❌ На эту дату все часы заняты. Выберите другую.", reply_markup=kb.as_markup())
+        await cb.message.answer("❌ На это время нет доступных часов.", reply_markup=kb.as_markup())
         await cb.answer(); return
-    
+
     price_per_hour = int(slots[0].price)
     await state.set_state(BookFSM.slots)
     await state.update_data(selected_slots=[])
-    
+
     kb = InlineKeyboardBuilder()
     for sl in slots:
         kb.button(text=f"⏳ {sl.start_time}-{sl.end_time}", callback_data=f"slot_toggle:{sl.id}")
@@ -92,14 +110,13 @@ async def select_date(cb: CallbackQuery, state: FSMContext):
         InlineKeyboardButton(text="⬅️ Назад к датам", callback_data="back_to_date"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
     )
-    
+
     await cb.message.answer(
         f"📆 {format_date_display(date_iso)} | 💰 **{price_per_hour}₽/час**\n"
         f"⏰ **Шаг 2/5:** Выберите нужные часы:",
         reply_markup=kb.as_markup(), parse_mode="Markdown"
     )
     await cb.answer()
-
 @router.callback_query(F.data.startswith("slot_toggle:"))
 async def toggle_slot(cb: CallbackQuery, state: FSMContext):
     sid = int(cb.data.split(":")[1]); data = await state.get_data()
