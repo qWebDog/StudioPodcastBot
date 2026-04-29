@@ -132,11 +132,9 @@ MONTH_NAMES = {
 }
 
 def months_kb(year_months: list[str]) -> InlineKeyboardMarkup:
-    """Кнопки выбора месяца: Май 2024, Июнь 2024 и т.д."""
     kb = InlineKeyboardBuilder()
     for ym in sorted(year_months):
         year, month = ym.split("-")
-        name = f"{MONTH_NAMES[month]} {year}"
-        kb.button(text=name, callback_data=f"book_month:{ym}")
+        kb.button(text=f"{MONTH_NAMES[month]} {year}", callback_data=f"book_month:{ym}")
     kb.adjust(1)
     return kb.as_markup()
