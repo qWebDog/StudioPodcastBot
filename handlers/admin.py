@@ -19,9 +19,9 @@ PRICES_FILE = os.path.join(os.getcwd(), "prices.json")
 
 # 🔄 Состояния админки
 class AdminFSM(StatesGroup):
-    waiting_date = State()
-    waiting_start_time = State()
-    waiting_end_time = State()
+    add_date = State()
+    add_start = State()
+    add_end = State()
     waiting_price_key = State()
     waiting_broadcast = State()
     waiting_phone_search = State()
@@ -97,50 +97,75 @@ async def admin_slots_list(cb: CallbackQuery):
 
 # ➕ Создание слота (цена = 0)
 @router.callback_query(F.data == "admin_add_slot", F.from_user.id.in_(ADMIN_IDS))
-async def add_slot_start(cb: CallbackQuery, state: FSMContext):
-    await cb.message.edit_text("➕ **Создание слота**\nВведите дату в формате `ДД.ММ`:", parse_mode="Markdown")
-    await state.set_state(AdminFSM.waiting_date)
+async def add_slot_day_start(cb: CallbackQuery, state: FSMContext):
+    await cb.message.edit_text("📅 **Создать слоты на целый день**\nВведите дату в формате `ДД.ММ`:", parse_mode="Markdown")
+    await state.set_state(AdminFSM.add_date)
     await cb.answer()
 
-@router.message(AdminFSM.waiting_date, F.from_user.id.in_(ADMIN_IDS))
-async def add_slot_date(m: Message, state: FSMContext):
+@router.message(AdminFSM.add_date, F.from_user.id.in_(ADMIN_IDS))
+async def add_slot_day_date(m: Message, state: FSMContext):
     try:
         day, month = map(int, m.text.strip().split("."))
         year = datetime.now().year
         dt = datetime(year, month, day)
         if dt.date() < datetime.now().date(): dt = dt.replace(year=year+1)
         await state.update_data(slot_date=dt.strftime("%Y-%m-%d"))
-        await m.answer("⏰ Введите время начала (ЧЧ:ММ):")
-        await state.set_state(AdminFSM.waiting_start_time)
-    except:
+        await m.answer("⏰ Введите время начала работы студии (например, `10:00`):")
+        await state.set_state(AdminFSM.add_start)
+    except Exception:
         await m.answer("⚠️ Неверный формат. Пример: `25.12`")
 
-@router.message(AdminFSM.waiting_start_time, F.from_user.id.in_(ADMIN_IDS))
-async def add_slot_start_time(m: Message, state: FSMContext):
+@router.message(AdminFSM.add_start, F.from_user.id.in_(ADMIN_IDS))
+async def add_slot_day_start_time(m: Message, state: FSMContext):
     try:
         h, mi = map(int, m.text.strip().split(":"))
         if not (0 <= h <= 23 and 0 <= mi <= 59): raise ValueError
         await state.update_data(slot_start=f"{h:02d}:{mi:02d}")
-        await m.answer("⏰ Введите время окончания (ЧЧ:ММ):")
-        await state.set_state(AdminFSM.waiting_end_time)
-    except:
-        await m.answer("⚠️ Неверный формат. Пример: `14:00`")
+        await m.answer("⏰ Введите время окончания работы (например, `22:00`):")
+        await state.set_state(AdminFSM.add_end)
+    except Exception:
+        await m.answer("⚠️ Неверный формат. Пример: `22:00`")
 
-@router.message(AdminFSM.waiting_end_time, F.from_user.id.in_(ADMIN_IDS))
-async def add_slot_end_time(m: Message, state: FSMContext):
+@router.message(AdminFSM.add_end, F.from_user.id.in_(ADMIN_IDS))
+async def add_slot_day_end_time(m: Message, state: FSMContext):
     try:
-        h, mi = map(int, m.text.strip().split(":"))
-        if not (0 <= h <= 23 and 0 <= mi <= 59): raise ValueError
+        h_end, mi_end = map(int, m.text.strip().split(":"))
+        if not (0 <= h_end <= 23 and 0 <= mi_end <= 59): raise ValueError
+        end_time = f"{h_end:02d}:{mi_end:02d}"
+
         data = await state.get_data()
+        date_str = data["slot_date"]
+        start_str = data["slot_start"]
+
+        start_dt = datetime.strptime(start_str, "%H:%M")
+        end_dt = datetime.strptime(end_time, "%H:%M")
+
+        slots_to_create = []
+        current = start_dt
+        while current < end_dt:
+            next_dt = current + timedelta(hours=1)  # 🔹 Интервал: 1 час (можно заменить на minutes=30)
+            if next_dt > end_dt: break
+            slots_to_create.append((current.strftime("%H:%M"), next_dt.strftime("%H:%M")))
+            current = next_dt
+
+        if not slots_to_create:
+            return await m.answer("❌ Время окончания должно быть позже начала минимум на 1 час.")
+
         async with async_session() as s:
-            sl = Slot(date=data["slot_date"], start_time=data["slot_start"], end_time=f"{h:02d}:{mi:02d}", price=0.0, is_active=True, is_booked=False)
-            s.add(sl); await s.commit()
-        await m.answer(f"✅ Слот создан: {data['slot_date']} {data['slot_start']}-{h:02d}:{mi:02d} | Цена: 0₽")
+            existing = await s.execute(select(Slot).where(Slot.date == date_str))
+            if len(existing.scalars().all()) > 0:
+                return await m.answer(f"⚠️ На {date_str} уже есть слоты. Сначала удалите их или выберите другую дату.")
+
+            for st, et in slots_to_create:
+                s.add(Slot(date=date_str, start_time=st, end_time=et, price=0.0, is_active=True, is_booked=False))
+            await s.commit()
+
+        await m.answer(f"✅ Создано {len(slots_to_create)} слотов на {date_str}\n⏰ {start_str} – {end_time}\n💰 Цена: 0₽/час")
         await state.clear()
         await admin_slots_list(m, FSMContext())
-    except:
-        await m.answer("⚠️ Неверный формат. Пример: `15:30`")
-
+    except Exception as e:
+        await m.answer(f"⚠️ Ошибка: {str(e)}")
+        
 # 🔧 Управление слотом
 @router.callback_query(F.data.startswith("slot_manage:"), F.from_user.id.in_(ADMIN_IDS))
 async def manage_slot(cb: CallbackQuery):
