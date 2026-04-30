@@ -21,7 +21,11 @@ def load_prices():
     defaults = {"rental": 0, "cam1": 3000, "cam2": 3500, "cam3": 4000, "no_cam": 0}
     try:
         with open(PRICES_FILE, "r") as f:
-            return {**defaults, **json.load(f)}
+            saved = json.load(f)
+            # Миграция: если в файле остался старый ключ 'editing', переименовываем его
+            if "editing" in saved and "no_cam" not in saved:
+                saved["no_cam"] = saved.pop("editing")
+            return {**defaults, **saved}
     except:
         return defaults
 
@@ -50,6 +54,7 @@ async def _show_prices(event):
            f"📹 2 кам: {p['cam2']}₽\n"
            f"📹 3 кам: {p['cam3']}₽\n"
            f"🏢 Без камер: {p['no_cam']}₽")
+    
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="✏️ Аренда", callback_data="set_rental"),
         InlineKeyboardButton(text="✏️ 1 кам.", callback_data="set_cam1"),
@@ -58,6 +63,7 @@ async def _show_prices(event):
         InlineKeyboardButton(text="✏️ 3 кам.", callback_data="set_cam3"),
         InlineKeyboardButton(text="✏️ Без камер", callback_data="set_no_cam")
     ).row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
+    
     await _send_text(event, txt, kb.as_markup())
 
 def save_prices(prices: dict):
