@@ -147,15 +147,22 @@ async def select_month(cb: CallbackQuery, state: FSMContext):
     await state.update_data(year_month=cb.data.split(":")[1])
     await state.set_state(BookFSM.date)
     async with async_session() as s:
-        res = await s.execute(select(Slot.date).where(Slot.is_active, ~Slot.is_booked, Slot.date >= datetime.now().date().strftime("%Y-%m-%d"), Slot.date.startswith(cb.data.split(":")[1])).distinct().order_by(Slot.date))
+        res = await s.execute(select(Slot.date).where(
+            Slot.is_active, ~Slot.is_booked,
+            Slot.date >= datetime.now().date().strftime("%Y-%m-%d"),
+            Slot.date.startswith(cb.data.split(":")[1])
+        ).distinct().order_by(Slot.date))
         dates = [r[0] for r in res]
     if not dates: return await cb.answer("❌ Нет дней в этом месяце", show_alert=True)
+
     kb = InlineKeyboardBuilder()
-    for d in dates: kb.button(text=format_date_display(d), callback_data=f"book_date:{d}")
-    kb.button(text="⬅️ Назад", callback_data="back_to_months"); kb.adjust(1)
+    for d in dates:
+        kb.button(text=format_date_display(d), callback_data=f"book_date:{d}")
+    kb.adjust(3)  # 👈 Дни строго по 3 в строку
+    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_months"))  # 👈 Назад отдельно внизу
+
     await edit_booking_msg(cb, state, "📆 **Шаг 2/6:** Выберите дату:", kb.as_markup())
     await cb.answer()
-
 # 📅 НАЗАД: К месяцам
 @router.callback_query(F.data == "back_to_months")
 async def back_to_months(cb: CallbackQuery, state: FSMContext):
