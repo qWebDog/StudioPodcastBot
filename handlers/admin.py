@@ -603,16 +603,36 @@ async def broadcast_start_cb(cb: CallbackQuery, state: FSMContext):
 # 📷 ШАГ 1: Ожидание фото
 @router.callback_query(F.data == "bcast_type_photo", F.from_user.id.in_(ADMIN_IDS))
 async def bcast_photo_start(cb: CallbackQuery, state: FSMContext):
-    await cb.message.edit_text("📷 **Отправьте изображение:**\n*(Бот возьмёт лучшее качество)*")
+    txt = (
+        "📷 **Отправьте изображение:**\n\n"
+        "📝 **Доступное форматирование текста:**\n"
+        "• `**жирный**` → **жирный**\n"
+        "• `__курсив__` → _курсив_\n"
+        "• `` `код` `` → `код`\n"
+        "• `[ссылка](url)` → [ссылка](https://t.me)\n\n"
+        "*(Бот возьмёт лучшее качество)*"
+    )
+    await cb.message.edit_text(txt, parse_mode="Markdown")
     await state.set_state(AdminFSM.broadcast_wait_photo)
     await cb.answer()
 
 @router.message(AdminFSM.broadcast_wait_photo, F.photo, F.from_user.id.in_(ADMIN_IDS))
 async def bcast_photo_save(m: Message, state: FSMContext):
-    # Берём фото максимального разрешения
     photo_id = m.photo[-1].file_id
     await state.update_data(broadcast_photo=photo_id)
-    await m.answer("📝 **Введите текст подписи:**\n*(Отправьте `/skip`, если нужна только картинка)*")
+    
+    txt = (
+        "📝 **Введите текст подписи:**\n\n"
+        "📋 **Примеры форматирования:**\n"
+        "```\n"
+        "**жирный текст**\n"
+        "__курсив__\n"
+        "`моноширинный код`\n"
+        "[ссылка](https://example.com)\n"
+        "```\n"
+        "*(Отправьте `/skip`, если нужна только картинка)*"
+    )
+    await m.answer(txt, parse_mode="Markdown")
     await state.set_state(AdminFSM.broadcast_wait_text)
 
 @router.message(AdminFSM.broadcast_wait_photo, ~F.photo, F.from_user.id.in_(ADMIN_IDS))
@@ -622,7 +642,16 @@ async def bcast_photo_warn(m: Message):
 # 📝 ШАГ 2: Только текст (без фото)
 @router.callback_query(F.data == "bcast_type_text", F.from_user.id.in_(ADMIN_IDS))
 async def bcast_text_start(cb: CallbackQuery, state: FSMContext):
-    await cb.message.edit_text("📝 **Введите текст рассылки:**")
+    txt = (
+        "📝 **Введите текст рассылки:**\n\n"
+        "📋 **Поддерживается Markdown:**\n"
+        "• `**текст**` — **жирный**\n"
+        "• `__текст__` — _курсив_\n"
+        "• `` `код` `` — `моноширинный`\n"
+        "• `[ссылка](url)` — [ссылка](https://t.me)\n"
+        "• `||спойлер||` — ||скрытый текст||"
+    )
+    await cb.message.edit_text(txt, parse_mode="Markdown")
     await state.set_state(AdminFSM.broadcast_wait_text)
     await cb.answer()
 
@@ -650,11 +679,13 @@ async def bcast_exec(m: Message, state: FSMContext):
             else:
                 await m.bot.send_message(tid, text=caption, parse_mode="Markdown")
             sent += 1
-        except Exception:
+        except Exception as e:
+            logger.error(f"Broadcast fail to {tid}: {e}")
             failed += 1
-        await asyncio.sleep(0.3)  # Задержка от лимитов Telegram
+        await asyncio.sleep(0.3)
 
-    await m.answer(f"✅ **Рассылка завершена!**\n📤 Доставлено: `{sent}`\n❌ Ошибки: `{failed}`")
+    result_text = f"✅ **Рассылка завершена!**\n📤 Доставлено: `{sent}`\n❌ Ошибки: `{failed}`"
+    await m.answer(result_text, parse_mode="Markdown")
     await state.clear()
     kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
     await m.answer("Готово.", reply_markup=kb.as_markup())
