@@ -318,12 +318,12 @@ async def save_phone(m: Message, state: FSMContext):
 async def _create_booking(event, state: FSMContext):
     data = await state.get_data()
     deleted_buffer = None
-    
+
     async with async_session() as s:
         slots = []
         for sid in data["selected_slots"]:
             sl = await s.get(Slot, sid)
-            if not sl or sl.is_booked or not sl.is_active: 
+            if not sl or sl.is_booked or not sl.is_active:
                 return await edit_booking_msg(event, state, "❌ Слот занят. Начните заново.")
             slots.append(sl)
             sl.is_booked = True
@@ -355,33 +355,6 @@ async def _create_booking(event, state: FSMContext):
             user_tg_id=event.from_user.id,
             slot_ids=json.dumps(data["selected_slots"]),
             services=json.dumps(services_data),
-            total_price=data["total_price"]
-        )
-        s.add(b)
-        await s.commit()
-
-    times = [f"{sl.start_time}-{sl.end_time}" for sl in slots]
-    await _notify_new_booking(event.bot, b.id, data, times, data["total_price"])
-    await edit_booking_msg(event, state, f"✅ Бронь #{b.id} создана! Сумма: {int(data['total_price'])}₽. Ждём вас.")
-    await state.clear()
-
-        # 🔥 АВТОУДАЛЕНИЕ СЛЕДУЮЩЕГО СЛОТА (буфер между клиентами)
-        if slots:
-            max_end_time = max(sl.end_time for sl in slots)
-            next_slot = (await s.execute(select(Slot).where(
-                Slot.date == data["date"],
-                Slot.start_time == max_end_time,
-                ~Slot.is_booked,
-                Slot.is_active
-            ))).scalar_one_or_none()
-
-            if next_slot:
-                await s.delete(next_slot)
-
-        b = Booking(
-            user_tg_id=event.from_user.id,
-            slot_ids=json.dumps(data["selected_slots"]),
-            services=json.dumps({"camera": data["camera_type"]}),
             total_price=data["total_price"]
         )
         s.add(b)
