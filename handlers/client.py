@@ -67,67 +67,6 @@ async def switch_view(cb: CallbackQuery, view: str):
         kb = client_main_kb()
     elif view == "contact":
         text = "📞 **Связь с админом:**\n👤 TG: `@ваш_ник`\n📱 Тел: `+79990000000`\n🕒 10:00–22:00"
-    elif view == "bookings":
-        today = datetime.now().date().strftime("%Y-%m-%d")
-        async with async_session() as s:
-            res = await s.execute(select(Booking).where(Booking.user_tg_id == cb.from_user.id).order_by(Booking.created_at.desc()).limit(20))
-            all_bookings = res.scalars().all()
-
-        active = []
-        for b in all_bookings:
-            _, slots, _ = await get_booking_details(b.id)
-            if not slots: continue
-            if slots[0].date >= today and b.status in ["confirmed", "confirmed_reminder"]:
-                active.append((b, slots))
-
-        if not active:
-            text = "📭 У вас нет активных записей."
-        else:
-            text = "📋 **Ваши активные записи:**\n"
-            kb = InlineKeyboardBuilder()
-
-            # 🔹 Объединение смежных часов в интервалы
-            def merge_intervals(slts):
-                if not slts: return ""
-                times = sorted([(str(sl.start_time)[:5], str(sl.end_time)[:5]) for sl in slts])
-                merged = []
-                curr_s, curr_e = times[0]
-                for s_t, e_t in times[1:]:
-                    if s_t == curr_e:
-                        curr_e = e_t
-                    else:
-                        merged.append(f"{curr_s}-{curr_e}")
-                        curr_s, curr_e = s_t, e_t
-                merged.append(f"{curr_s}-{curr_e}")
-                return "\n⏰ ".join(merged)
-
-            admin_id = str(ADMIN_IDS[0]) if ADMIN_IDS else "Не указан"
-
-            for i, (b, slots) in enumerate(active):
-                # Разделитель между записями (кроме первой)
-                if i > 0:
-                    text += "\n➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖\n"
-
-                date_str = format_date_display(slots[0].date)
-                times_str = merge_intervals(slots)
-
-                text += (
-                    f"🆔 #{b.id}\n"
-                    f"📅 {date_str}\n"
-                    f"⏰ {times_str}\n"
-                    f"💰 {int(b.total_price)}₽\n"
-                    f"Администратор: `{admin_id}`"
-                )
-                kb.button(text="❌ Отменить запись", callback_data=f"my_cancel:{b.id}")
-
-            kb.adjust(1)
-            kb.button(text="⬅️ В главное меню", callback_data="view_main")
-            kb = kb.as_markup()
-
-    try:
-        await cb.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
-    except Exception:
-        await cb.message.answer(text, reply_markup=kb, parse_mode="Markdown")
 
 @router.message(F.text == "/start")
 async def cmd_start(m: Message, state: FSMContext):
@@ -445,39 +384,7 @@ async def _create_booking(event, state: FSMContext):
 async def cancel_booking(cb: CallbackQuery, state: FSMContext): await state.clear(); await switch_view(cb, "main"); await cb.answer()
 
 # 📋 Отмена брони
-@router.callback_query(F.data.startswith("my_cancel:"))
-async def my_cancel(cb: CallbackQuery):
-    bid = int(cb.data.split(":")[1])
-    async with async_session() as s:
-        b = await s.get(Booking, bid)
-        if not b or b.user_tg_id != cb.from_user.id or b.status != "confirmed":
-            return await cb.answer("⛔ Нельзя отменить", show_alert=True)
-        b.status = "cancelled"
 
-        for sid in json.loads(b.slot_ids):
-            sl = await s.get(Slot, sid)
-            if sl: sl.is_booked = False
-
-        # 🔄 Восстановление всех удалённых буферных слотов
-        svc = json.loads(b.services) if b.services else {}
-        buffers = svc.get("buffer_deleted", [])
-        if not isinstance(buffers, list): buffers = [buffers]  # Совместимость со старыми бронями
-
-        for buf in buffers:
-            s.add(Slot(
-                date=buf["date"],
-                start_time=buf["start"],
-                end_time=buf["end"],
-                price=buf["price"],
-                is_active=True,
-                is_booked=False
-            ))
-
-        await s.commit()
-
-    await cb.answer("✅ Отменено")
-    await switch_view(cb, "bookings")
-    await _notify_admins(cb.bot, b, "cancelled")
     
 # 🔔 Напоминания
 @router.callback_query(F.data.startswith("rem_confirm:") | F.data.startswith("rem_cancel:"))
@@ -497,7 +404,145 @@ async def handle_reminder(cb: CallbackQuery):
     except: pass
     await cb.answer(); await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
 
-# 📢 Уведомления (✅ ИСПРАВЛЕНО: параметр data: dict)
+# 🔄 Получение активных броней
+async def _get_active_bookings(user_id: int):
+    today = datetime.now().date().strftime("%Y-%m-%d")
+    async with async_session() as s:
+        res = await s.execute(select(Booking).where(
+            Booking.user_tg_id == user_id,
+            Booking.status.in_(["confirmed", "confirmed_reminder"])
+        ).order_by(Booking.created_at.desc()))
+        all_b = res.scalars().all()
+
+    active = []
+    for b in all_b:
+        sl_res = await s.execute(select(Slot).where(Slot.id.in_(json.loads(b.slot_ids))).order_by(Slot.start_time))
+        slots = sl_res.scalars().all()
+        if slots and slots[0].date >= today:
+            active.append((b, slots))
+    return active
+
+# 📋 ШАГ 1: Месяцы
+@router.callback_query(F.data == "view_bookings")
+async def view_bookings_months(cb: CallbackQuery):
+    active = await _get_active_bookings(cb.from_user.id)
+    if not active:
+        kb = InlineKeyboardBuilder().button(text="⬅️ В меню", callback_data="view_main")
+        try: await cb.message.edit_text("📭 У вас нет активных записей.", reply_markup=kb.as_markup())
+        except: await cb.message.answer("📭 У вас нет активных записей.", reply_markup=kb.as_markup())
+        return await cb.answer()
+
+    months = {}
+    for _, slots in active:
+        months.setdefault(slots[0].date[:7], True)
+
+    txt = "📋 **Выберите месяц:**"
+    kb = InlineKeyboardBuilder()
+    for ym in sorted(months.keys()):
+        y, m = ym.split("-")
+        kb.button(text=f"{MONTH_NAMES[m]} {y}", callback_data=f"bkg_month:{ym}")
+    kb.adjust(1)
+    kb.button(text="⬅️ В главное меню", callback_data="view_main")
+    try: await cb.message.edit_text(txt, reply_markup=kb.as_markup())
+    except: await cb.message.answer(txt, reply_markup=kb.as_markup())
+    await cb.answer()
+
+# 📅 ШАГ 2: Дни
+@router.callback_query(F.data.startswith("bkg_month:"))
+async def view_bookings_days(cb: CallbackQuery):
+    ym = cb.data.split(":")[1]
+    active = await _get_active_bookings(cb.from_user.id)
+    days = {slots[0].date for _, slots in active if slots[0].date[:7] == ym}
+
+    txt = "📅 **Выберите день:**"
+    kb = InlineKeyboardBuilder()
+    for d in sorted(days):
+        kb.button(text=format_date_display(d), callback_data=f"bkg_date:{d}")
+    kb.adjust(1)
+    kb.button(text="⬅️ К месяцам", callback_data="view_bookings")
+    try: await cb.message.edit_text(txt, reply_markup=kb.as_markup())
+    except: await cb.message.answer(txt, reply_markup=kb.as_markup())
+    await cb.answer()
+
+# 📝 ШАГ 3: Записи на день в сообщении
+@router.callback_query(F.data.startswith("bkg_date:"))
+async def view_bookings_day_details(cb: CallbackQuery):
+    date_str = cb.data.split(":")[1]
+    active = await _get_active_bookings(cb.from_user.id)
+    day_bookings = [(b, sl) for b, sl in active if sl[0].date == date_str]
+
+    if not day_bookings:
+        kb = InlineKeyboardBuilder().button(text="⬅️ К дням", callback_data=f"bkg_month:{date_str[:7]}")
+        try: await cb.message.edit_text("📭 На этот день записей нет.", reply_markup=kb.as_markup())
+        except: await cb.message.answer("📭 На этот день записей нет.", reply_markup=kb.as_markup())
+        return await cb.answer()
+
+    txt = f"📅 **Записи на {format_date_display(date_str)}:**\n"
+    kb = InlineKeyboardBuilder()
+    admin_id = str(ADMIN_IDS[0]) if ADMIN_IDS else "N/A"
+
+    for i, (b, slots) in enumerate(day_bookings):
+        if i > 0: txt += "\n➖➖➖➖➖➖➖➖➖➖\n"
+        times = " | ".join(f"{sl.start_time}-{sl.end_time}" for sl in slots)
+        txt += f"🆔 #{b.id}\n⏰ {times}\n💰 {int(b.total_price)}₽\nАдминистратор: `{admin_id}`"
+        kb.button(text=f"❌ Отменить #{b.id}", callback_data=f"cancel_select:{b.id}")
+
+    kb.row(InlineKeyboardButton(text="⬅️ К дням", callback_data=f"bkg_month:{date_str[:7]}"))
+    try: await cb.message.edit_text(txt, reply_markup=kb.as_markup())
+    except: await cb.message.answer(txt, reply_markup=kb.as_markup())
+    await cb.answer()
+
+# ❌ Отмена: Инлайн-клавиатура с (дата | время)
+@router.callback_query(F.data.startswith("cancel_select:"))
+async def cancel_booking_view(cb: CallbackQuery):
+    bid = int(cb.data.split(":")[1])
+    async with async_session() as s:
+        b = await s.get(Booking, bid)
+        if not b or b.user_tg_id != cb.from_user.id or b.status not in ["confirmed", "confirmed_reminder"]:
+            return await cb.answer("⛔ Запись не найдена или уже отменена", show_alert=True)
+        sl_res = await s.execute(select(Slot).where(Slot.id.in_(json.loads(b.slot_ids))).order_by(Slot.start_time))
+        slots = sl_res.scalars().all()
+
+    txt = f"❌ **Отмена брони #{b.id}**\nНажмите на слот, чтобы подтвердить отмену:"
+    kb = InlineKeyboardBuilder()
+    for sl in slots:
+        btn_text = f"{format_date_display(sl.date)} | {sl.start_time}-{sl.end_time}"
+        kb.row(InlineKeyboardButton(text=btn_text, callback_data=f"cancel_do:{b.id}"))
+    
+    kb.row(InlineKeyboardButton(text="⬅️ Назад к записям", callback_data=f"bkg_date:{slots[0].date}"))
+    try: await cb.message.edit_text(txt, reply_markup=kb.as_markup())
+    except: await cb.message.answer(txt, reply_markup=kb.as_markup())
+    await cb.answer()
+
+# ✅ Отмена: Финальное действие
+@router.callback_query(F.data.startswith("cancel_do:"))
+async def cancel_booking_confirm(cb: CallbackQuery):
+    bid = int(cb.data.split(":")[1])
+    async with async_session() as s:
+        b = await s.get(Booking, bid)
+        if not b or b.user_tg_id != cb.from_user.id or b.status != "confirmed":
+            return await cb.answer("⛔ Нельзя отменить", show_alert=True)
+
+        b.status = "cancelled"
+        for sid in json.loads(b.slot_ids):
+            sl = await s.get(Slot, sid)
+            if sl: sl.is_booked = False
+
+        svc = json.loads(b.services) if b.services else {}
+        buffers = svc.get("buffer_deleted", [])
+        if not isinstance(buffers, list): buffers = [buffers]
+        for buf in buffers:
+            s.add(Slot(date=buf["date"], start_time=buf["start"], end_time=buf["end"], price=buf["price"], is_active=True, is_booked=False))
+        await s.commit()
+
+    await cb.answer("✅ Запись отменена")
+    await _notify_admins(cb.bot, b, "cancelled")
+    try: 
+        await cb.message.edit_text("✅ **Бронь успешно отменена.**\nСлоты возвращены в расписание.", reply_markup=InlineKeyboardBuilder().button(text="📋 В мои записи", callback_data="view_bookings").as_markup())
+    except: 
+        await cb.message.answer("✅ Бронь отменена.", reply_markup=InlineKeyboardBuilder().button(text="📋 В мои записи", callback_data="view_bookings").as_markup())
+
+# 📢 Уведомления 
 # 📢 Уведомление о новой брони
 async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list, total_price: float):
     # 🔹 Утилита: объединяет подряд идущие интервалы и возвращает список строк
