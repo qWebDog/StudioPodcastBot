@@ -29,7 +29,7 @@ class BookFSM(StatesGroup):
 
 # 💰 Загрузка цен
 def get_prices():
-    defaults = {"rental": 2000, "cam1": 3000, "cam2": 3500, "cam3": 4000, "editing": 5000}
+    defaults = {"rental": 0, "cam1": 3000, "cam2": 3500, "cam3": 4000, "no_cam": 0}
     try:
         with open(PRICES_FILE, "r") as f: return {**defaults, **json.load(f)}
     except: return defaults
@@ -100,12 +100,15 @@ async def cmd_start(m: Message, state: FSMContext):
 
 @router.callback_query(F.data == "view_main")
 async def go_main(cb: CallbackQuery, state: FSMContext): await state.clear(); await switch_view(cb, "main"); await cb.answer()
+    
 @router.callback_query(F.data == "view_price")
 async def go_price(cb: CallbackQuery):
     p = get_prices()
-    await cb.answer(f"ПРАЙС\n\n🎙️ Аренда — {p['rental']}₽/час\n\n📹 1 камера — {p['cam1']}₽\n   2 камеры — {p['cam2']}₽\n   3 камеры — {p['cam3']}₽\n\n🏢 Студия без камер — 0₽", show_alert=True)
+    await cb.answer(f"ПРАЙС\n\n🎙️ Аренда — {p['rental']}₽/час\n\n📹 1 камера — {p['cam1']}₽\n   2 камеры — {p['cam2']}₽\n   3 камеры — {p['cam3']}₽\n\n🏢 Без камер — {p['no_cam']}₽", show_alert=True)
+
 @router.callback_query(F.data == "view_contact")
 async def go_contact(cb: CallbackQuery): await switch_view(cb, "contact"); await cb.answer()
+
 @router.callback_query(F.data == "view_bookings")
 async def go_bookings(cb: CallbackQuery): await switch_view(cb, "bookings"); await cb.answer()
 
@@ -239,11 +242,12 @@ async def back_to_camera(cb: CallbackQuery, state: FSMContext):
 async def _show_summary(cb, state):
     data = await state.get_data(); p = get_prices()
     hours = len(data.get("selected_slots", []))
-    rental = hours * p["rental"]
-    cam_price = p.get(f"cam{data['camera_type']}", 0)
+    rental = hours * p["rental"]  # ✅ Теперь 0₽ по умолчанию
+    cam_type = data['camera_type']
+    cam_price = p.get(f"cam{cam_type}", 0) if cam_type != '0' else p.get("no_cam", 0)
     total = rental + cam_price
     await state.update_data(total_price=total)
-    cam_label = "Без камер" if data["camera_type"] == "0" else f"{data['camera_type']} кам."
+    cam_label = "Без камер" if cam_type == "0" else f"{cam_type} кам."
     txt = f"📋 **Итог:**\n📅 {format_date_display(data['date'])} ⏰ {hours} ч\n📹 {cam_label}\n💵 **Всего: {total}₽**"
     kb = InlineKeyboardBuilder().button(text="✅ Подтвердить", callback_data="book_confirm")
     kb.row(InlineKeyboardButton(text="⬅️ Изменить камеры", callback_data="back_to_camera"), InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel"))
