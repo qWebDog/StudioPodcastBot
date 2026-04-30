@@ -458,17 +458,39 @@ async def handle_reminder(cb: CallbackQuery):
 
 # 📢 Уведомления (✅ ИСПРАВЛЕНО: параметр data: dict)
 async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, total_price: float):
+    # 🔹 Утилита: объединяет подряд идущие интервалы и считает часы
+    def merge_slots(times):
+        if not times: return ""
+        # Сортируем слоты по времени начала
+        slots = sorted([t.split("-") for t in times], key=lambda x: x[0])
+        merged = []
+        curr_start, curr_end = slots[0]
+        count = 1
+
+        for start, end in slots[1:]:
+            if start == curr_end:
+                curr_end = end
+                count += 1
+            else:
+                h = "час" if count == 1 else "часа" if 2 <= count <= 4 else "часов"
+                merged.append(f"{curr_start}-{curr_end} ({count} {h})")
+                curr_start, curr_end = start, end
+                count = 1
+
+        h = "час" if count == 1 else "часа" if 2 <= count <= 4 else "часов"
+        merged.append(f"{curr_start}-{curr_end} ({count} {h})")
+        return ", ".join(merged)
+
+    formatted_times = merge_slots(times_str)
     cam = "Без камер" if data.get("camera_type") == "0" else f"{data.get('camera_type')} кам."
-    msg = f"🆕 **Бронь #{booking_id}**\n👤 {data['client_name']} | 📞 `{data['phone']}`\n📅 {format_date_display(data['date'])} ⏰ {', '.join(times_str)}\n📹 {cam}\n💰 {int(total_price)}₽"
+    msg = (
+        f"🆕 **Бронь #{booking_id}**\n"
+        f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
+        f"📅 {format_date_display(data['date'])} ⏰ {formatted_times}\n"
+        f"📹 {cam}\n"
+        f"💰 {int(total_price)}₽"
+    )
     for aid in ADMIN_IDS:
         try: await bot.send_message(aid, msg, parse_mode="Markdown")
         except Exception as e: logger.error(f"Notify fail {aid}: {e}")
-        await asyncio.sleep(0.3)
-
-async def _notify_admins(bot, booking, action):
-    tag = f"ID:{booking.user_tg_id}"
-    msg = f"{'✅' if action == 'confirmed' else '❌'} Клиент {tag} ответил.\n🆔 #{booking.id}"
-    for aid in ADMIN_IDS:
-        try: await bot.send_message(aid, msg)
-        except Exception as e: logger.error(f"Admin notify fail {aid}: {e}")
         await asyncio.sleep(0.3)
