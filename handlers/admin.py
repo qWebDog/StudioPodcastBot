@@ -12,6 +12,21 @@ from sqlalchemy import select
 from database import async_session, Slot, Booking, User, get_user
 from config import ADMIN_IDS
 
+@router.message(F.text == "/admin", F.from_user.id.in_(ADMIN_IDS))
+async def cmd_admin(m: Message):
+    kb = InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="📋 Все слоты", callback_data="admin_slots_list"),
+        InlineKeyboardButton(text="📖 Все брони", callback_data="admin_bookings_list")
+    ).row(
+        InlineKeyboardButton(text="➕ Создать слот", callback_data="admin_add_slot"),
+        InlineKeyboardButton(text="💰 Редактор цен", callback_data="admin_prices")
+    ).row(
+        InlineKeyboardButton(text="🗓️ Брони по дате", callback_data="admin_bookings_by_date"),
+        InlineKeyboardButton(text="🔍 Поиск по тел.", callback_data="adm_search_phone")
+    ).row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
+    kb.adjust(2)
+    await m.answer("🛠️ **Панель администратора:**", reply_markup=kb.as_markup(), parse_mode="Markdown")
+
 router = Router()
 logger = logging.getLogger(__name__)
 PRICES_FILE = os.path.join(os.getcwd(), "prices.json")
