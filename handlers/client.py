@@ -248,18 +248,24 @@ async def back_to_camera(cb: CallbackQuery, state: FSMContext):
 
 # 📋 ИТОГ
 async def _show_summary(cb, state):
-    data = await state.get_data(); p = get_prices()
+    data = await state.get_data()
+    p = get_prices()
     hours = len(data.get("selected_slots", []))
-    rental = hours * p["rental"]  # ✅ Теперь 0₽ по умолчанию
-    cam_type = data['camera_type']
-    cam_price = p.get(f"cam{cam_type}", 0) if cam_type != '0' else p.get("no_cam", 0)
+    
+    rental = hours * p["rental"]
+    cam_type = data.get("camera_type", "0")
+    base_price = p.get(f"cam{cam_type}", 0) if cam_type != "0" else p.get("no_cam", 0)
+    cam_price = base_price * hours  # ✅ Стоимость услуги/камер умножается на кол-во часов
+    
     total = rental + cam_price
     await state.update_data(total_price=total)
+    
     cam_label = "Без камер" if cam_type == "0" else f"{cam_type} кам."
     txt = f"📋 **Итог:**\n📅 {format_date_display(data['date'])} ⏰ {hours} ч\n📹 {cam_label}\n💵 **Всего: {total}₽**"
     kb = InlineKeyboardBuilder().button(text="✅ Подтвердить", callback_data="book_confirm")
     kb.row(InlineKeyboardButton(text="⬅️ Изменить камеры", callback_data="back_to_camera"), InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel"))
-    await edit_booking_msg(cb, state, txt, kb.as_markup()); await cb.answer()
+    await edit_booking_msg(cb, state, txt, kb.as_markup())
+    await cb.answer()
 
 # 👤 ШАГ 5/6: Имя
 @router.callback_query(F.data == "book_confirm")
@@ -311,6 +317,8 @@ async def save_phone(m: Message, state: FSMContext):
 
 async def _create_booking(event, state: FSMContext):
     data = await state.get_data()
+    deleted_buffer = None
+    
     async with async_session() as s:
         slots = []
         for sid in data["selected_slots"]:
@@ -319,6 +327,43 @@ async def _create_booking(event, state: FSMContext):
                 return await edit_booking_msg(event, state, "❌ Слот занят. Начните заново.")
             slots.append(sl)
             sl.is_booked = True
+
+        # 🔥 Автоудаление следующего слота (буфер) с сохранением данных для восстановления
+        if slots:
+            max_end_time = max(sl.end_time for sl in slots)
+            next_slot = (await s.execute(select(Slot).where(
+                Slot.date == data["date"],
+                Slot.start_time == max_end_time,
+                ~Slot.is_booked,
+                Slot.is_active
+            ))).scalar_one_or_none()
+
+            if next_slot:
+                deleted_buffer = {
+                    "date": next_slot.date,
+                    "start": next_slot.start_time,
+                    "end": next_slot.end_time,
+                    "price": float(next_slot.price)
+                }
+                await s.delete(next_slot)
+
+        services_data = {"camera": data["camera_type"]}
+        if deleted_buffer:
+            services_data["buffer_deleted"] = deleted_buffer
+
+        b = Booking(
+            user_tg_id=event.from_user.id,
+            slot_ids=json.dumps(data["selected_slots"]),
+            services=json.dumps(services_data),
+            total_price=data["total_price"]
+        )
+        s.add(b)
+        await s.commit()
+
+    times = [f"{sl.start_time}-{sl.end_time}" for sl in slots]
+    await _notify_new_booking(event.bot, b.id, data, times, data["total_price"])
+    await edit_booking_msg(event, state, f"✅ Бронь #{b.id} создана! Сумма: {int(data['total_price'])}₽. Ждём вас.")
+    await state.clear()
 
         # 🔥 АВТОУДАЛЕНИЕ СЛЕДУЮЩЕГО СЛОТА (буфер между клиентами)
         if slots:
@@ -356,13 +401,32 @@ async def my_cancel(cb: CallbackQuery):
     bid = int(cb.data.split(":")[1])
     async with async_session() as s:
         b = await s.get(Booking, bid)
-        if not b or b.user_tg_id != cb.from_user.id or b.status != "confirmed": return await cb.answer("⛔ Нельзя отменить", show_alert=True)
+        if not b or b.user_tg_id != cb.from_user.id or b.status != "confirmed": 
+            return await cb.answer("⛔ Нельзя отменить", show_alert=True)
         b.status = "cancelled"
+        
         for sid in json.loads(b.slot_ids):
             sl = await s.get(Slot, sid)
             if sl: sl.is_booked = False
+        
+        # 🔄 Восстановление удалённого буферного слота
+        svc = json.loads(b.services) if b.services else {}
+        buffer = svc.get("buffer_deleted")
+        if buffer:
+            s.add(Slot(
+                date=buffer["date"],
+                start_time=buffer["start"],
+                end_time=buffer["end"],
+                price=buffer["price"],
+                is_active=True,
+                is_booked=False
+            ))
+            
         await s.commit()
-    await cb.answer("✅ Отменено"); await switch_view(cb, "bookings"); await _notify_admins(cb.bot, b, "cancelled")
+        
+    await cb.answer("✅ Отменено")
+    await switch_view(cb, "bookings")
+    await _notify_admins(cb.bot, b, "cancelled")
 
 # 🔔 Напоминания
 @router.callback_query(F.data.startswith("rem_confirm:") | F.data.startswith("rem_cancel:"))
