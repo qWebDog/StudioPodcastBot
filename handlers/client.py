@@ -492,7 +492,6 @@ async def view_bookings_day_details(cb: CallbackQuery):
         except: await cb.message.answer("📭 На этот день записей нет.", reply_markup=kb.as_markup())
         return await cb.answer()
 
-    # 🔍 Получаем @username админа из БД
     admin_tag = "Не указан"
     if ADMIN_IDS:
         async with async_session() as s:
@@ -500,7 +499,7 @@ async def view_bookings_day_details(cb: CallbackQuery):
             if admin_u and admin_u.username:
                 admin_tag = f"@{admin_u.username}"
             else:
-                admin_tag = f"`{ADMIN_IDS[0]}`"  # Фоллбэк на ID, если у админа нет юзернейма
+                admin_tag = f"{ADMIN_IDS[0]}"  # ✅ Без кавычек
 
     txt = f"📅 **Записи на {format_date_display(date_str)}:**\n"
     kb = InlineKeyboardBuilder()
@@ -508,7 +507,7 @@ async def view_bookings_day_details(cb: CallbackQuery):
     for i, (b, slots) in enumerate(day_bookings):
         if i > 0: txt += "\n➖➖➖➖➖➖➖➖➖➖\n"
         times_str = _merge_slots_display(slots)
-        txt += f"🆔 #{b.id}\n⏰ {times_str}\n💰 {int(b.total_price)}₽\nАдминистратор: `{admin_tag}`"
+        txt += f"🆔 #{b.id}\n⏰ {times_str}\n💰 {int(b.total_price)}₽\nАдминистратор: {admin_tag}"  # ✅ Без кавычек
         kb.button(text=f"❌ Отменить #{b.id}", callback_data=f"cancel_select:{b.id}")
     kb.adjust(1)
     kb.row(InlineKeyboardButton(text="⬅️ К дням", callback_data=f"bkg_month:{date_str[:7]}"))
@@ -576,13 +575,12 @@ async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list,
         h = "час" if count == 1 else "часа" if 2 <= count <= 4 else "часов"
         merged.append(f"{curr_start}-{curr_end} ({count} {h})")
         return merged
-
     time_lines = merge_slots(times_str)
     cam = "Без камер" if data.get("camera_type") == "0" else f"{data.get('camera_type')} кам."
     msg = (
         f"🆕 **Бронь #{booking_id}**\n"
         f"👤 {data['client_name']}\n"
-        f"📞 `{data['phone']}`\n"
+        f"📞 {data['phone']}\n"  # ✅ Без кавычек
         f"📅 {format_date_display(data['date'])}\n"
         f"⏰ " + "\n⏰ ".join(time_lines) + "\n"
         f"📹 {cam}\n"
@@ -592,12 +590,12 @@ async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list,
         try: await bot.send_message(aid, msg, parse_mode="Markdown")
         except Exception as e: logger.error(f"Notify fail {aid}: {e}")
         await asyncio.sleep(0.3)
-
+        
 async def _notify_admins(bot, booking, action):
     async with async_session() as s:
         u = (await s.execute(select(User).where(User.tg_id == booking.user_tg_id))).scalar_one_or_none()
         name, phone = u.client_name if u else "Не указано", u.phone if u else "Не указан"
-        tag = f"@{u.username}" if u and u.username else f"`{booking.user_tg_id}`"
+        tag = f"@{u.username}" if u and u.username else f"{booking.user_tg_id}"  # ✅ Без кавычек
         slots = (await s.execute(select(Slot).where(Slot.id.in_(json.loads(booking.slot_ids))).order_by(Slot.start_time))).scalars().all()
         def merge_intervals(times):
             if not times: return []
@@ -613,7 +611,13 @@ async def _notify_admins(bot, booking, action):
         date_str = format_date_display(slots[0].date) if slots else "Не указано"
     if action == "cancelled":
         intervals_text = "\n".join([f"⏰ {t}" for t in merged_intervals])
-        msg = f"❌ **Бронь #{booking.id} отменена**\n📅 {date_str}\n{intervals_text}\n👤 Клиент: {name}\n🆔 ID: {tag}\n📞 Телефон: `{phone}`"
+        msg = (
+            f"❌ **Бронь #{booking.id} отменена**\n"
+            f"📅 {date_str}\n{intervals_text}\n"
+            f"👤 Клиент: {name}\n"
+            f"🆔 ID: {tag}\n"  # ✅ Без кавычек
+            f"📞 Телефон: {phone}"  # ✅ Без кавычек
+        )
     else: msg = f"{'✅' if action == 'confirmed' else '❌'} Клиент {tag} ответил.\n🆔 Бронь #{booking.id}"
     for aid in ADMIN_IDS:
         try: await bot.send_message(aid, msg, parse_mode="Markdown")
