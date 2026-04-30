@@ -18,26 +18,26 @@ logger = logging.getLogger(__name__)
 PRICES_FILE = os.path.join(os.getcwd(), "prices.json")
 
 class AdminFSM(StatesGroup):
-    waiting_price_key = State()
-    waiting_broadcast = State()
-    waiting_phone_search = State()
-    # Один слот
+    # Слоты
     single_date = State()
     single_start = State()
     single_end = State()
-    # День
     day_date = State()
     day_start = State()
     day_end = State()
-    # Месяц
     month_month = State()
     month_start = State()
     month_end = State()
-    # Период
     period_start_date = State()
     period_end_date = State()
     period_start = State()
     period_end = State()
+    # Админка
+    waiting_price_key = State()
+    waiting_phone_search = State()
+    # 🆕 Рассылка
+    broadcast_wait_photo = State()
+    broadcast_wait_text = State()
     
 # 💰 Загрузка цен (автоматически заменяет старый ключ 'editing' на 'no_cam')
 def load_prices():
@@ -590,19 +590,71 @@ async def search_exec_msg(m: Message, state: FSMContext):
     await m.answer(txt, parse_mode="Markdown"); await state.clear()
 
 # 📢 Рассылка
+# 📢 СТАРТ РАССЫЛКИ: выбор типа
 @router.callback_query(F.data == "admin_broadcast", F.from_user.id.in_(ADMIN_IDS))
 async def broadcast_start_cb(cb: CallbackQuery, state: FSMContext):
-    await cb.message.edit_text("📢 Введите текст:")
-    await state.set_state(AdminFSM.waiting_broadcast); await cb.answer()
+    kb = InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="📷 Фото + Текст", callback_data="bcast_type_photo"),
+        InlineKeyboardButton(text="📝 Только текст", callback_data="bcast_type_text")
+    ).row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
+    await _send_text(cb, "📢 **Выберите тип рассылки:**", kb.as_markup())
+    await cb.answer()
 
-@router.message(AdminFSM.waiting_broadcast, F.from_user.id.in_(ADMIN_IDS))
-async def broadcast_exec_msg(m: Message, state: FSMContext):
-    await m.answer("⏳ Рассылка...")
-    async with async_session() as s: targets = [r[0] for r in (await s.execute(select(User.tg_id).distinct())).all()]
-    sent = 0
+# 📷 ШАГ 1: Ожидание фото
+@router.callback_query(F.data == "bcast_type_photo", F.from_user.id.in_(ADMIN_IDS))
+async def bcast_photo_start(cb: CallbackQuery, state: FSMContext):
+    await cb.message.edit_text("📷 **Отправьте изображение:**\n*(Бот возьмёт лучшее качество)*")
+    await state.set_state(AdminFSM.broadcast_wait_photo)
+    await cb.answer()
+
+@router.message(AdminFSM.broadcast_wait_photo, F.photo, F.from_user.id.in_(ADMIN_IDS))
+async def bcast_photo_save(m: Message, state: FSMContext):
+    # Берём фото максимального разрешения
+    photo_id = m.photo[-1].file_id
+    await state.update_data(broadcast_photo=photo_id)
+    await m.answer("📝 **Введите текст подписи:**\n*(Отправьте `/skip`, если нужна только картинка)*")
+    await state.set_state(AdminFSM.broadcast_wait_text)
+
+@router.message(AdminFSM.broadcast_wait_photo, ~F.photo, F.from_user.id.in_(ADMIN_IDS))
+async def bcast_photo_warn(m: Message):
+    await m.answer("⚠️ Пожалуйста, отправьте именно изображение.")
+
+# 📝 ШАГ 2: Только текст (без фото)
+@router.callback_query(F.data == "bcast_type_text", F.from_user.id.in_(ADMIN_IDS))
+async def bcast_text_start(cb: CallbackQuery, state: FSMContext):
+    await cb.message.edit_text("📝 **Введите текст рассылки:**")
+    await state.set_state(AdminFSM.broadcast_wait_text)
+    await cb.answer()
+
+# 🚀 ШАГ 3: Отправка всем пользователям
+@router.message(AdminFSM.broadcast_wait_text, F.from_user.id.in_(ADMIN_IDS))
+async def bcast_exec(m: Message, state: FSMContext):
+    caption = m.text.strip()
+    data = await state.get_data()
+    photo_id = data.get("broadcast_photo")
+    is_skip = (caption == "/skip" and photo_id is not None)
+
+    if is_skip:
+        caption = ""
+
+    await m.answer("⏳ **Рассылка запущена...**\nЭто может занять некоторое время.")
+    
+    async with async_session() as s:
+        targets = [r[0] for r in (await s.execute(select(User.tg_id).distinct())).all()]
+
+    sent, failed = 0, 0
     for tid in targets:
-        try: await m.bot.send_message(tid, m.text); sent += 1; await asyncio.sleep(0.3)
-        except: pass
-    await m.answer(f"✅ Доставлено: {sent}/{len(targets)}")
+        try:
+            if photo_id:
+                await m.bot.send_photo(tid, photo=photo_id, caption=caption, parse_mode="Markdown")
+            else:
+                await m.bot.send_message(tid, text=caption, parse_mode="Markdown")
+            sent += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.3)  # Задержка от лимитов Telegram
+
+    await m.answer(f"✅ **Рассылка завершена!**\n📤 Доставлено: `{sent}`\n❌ Ошибки: `{failed}`")
     await state.clear()
-    await _show_admin_menu(m)
+    kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
+    await m.answer("Готово.", reply_markup=kb.as_markup())
