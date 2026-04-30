@@ -38,7 +38,10 @@ class AdminFSM(StatesGroup):
     # 🆕 Рассылка
     broadcast_wait_photo = State()
     broadcast_wait_text = State()
-    
+    #Перенос записей
+    transfer_wait_date = State()
+    transfer_wait_slots = State()
+
 # 💰 Загрузка цен (автоматически заменяет старый ключ 'editing' на 'no_cam')
 def load_prices():
     defaults = {"rental": 0, "cam1": 3000, "cam2": 3500, "cam3": 4000, "no_cam": 0}
@@ -470,20 +473,24 @@ async def bks_list_cb(cb: CallbackQuery): await _show_bookings(cb); await cb.ans
 # 🔍 Детали брони
 async def _show_booking_detail(event, bid: int):
     async with async_session() as s:
+        b = await s.get(Slot, bid) # Исправлено: Booking, а не Slot
         b = await s.get(Booking, bid)
         if not b: return await event.answer("❌ Не найдена", show_alert=True) if isinstance(event, CallbackQuery) else await event.answer("❌")
         u = (await s.execute(select(User).where(User.tg_id == b.user_tg_id))).scalar_one_or_none()
         sl_res = await s.execute(select(Slot).where(Slot.id.in_(json.loads(b.slot_ids))))
         sls = sl_res.scalars().all()
         svc = json.loads(b.services) if b.services else {}
+        
     txt = (f"🆔 **#{b.id}** | `{b.status}`\n👤 {u.client_name if u else '?'} | 📞 `{u.phone if u else '?'}`\n"
            f"📅 {fmt_date(sls[0].date)} | ⏰ {' | '.join(f'{s.start_time}-{s.end_time}' for s in sls)}\n"
-           f"📹 {svc.get('camera','?')} кам. | 🎬 {'Да' if svc.get('editing')=='yes' else 'Нет'}\n💵 {int(b.total_price)}₽")
+           f"📹 {svc.get('camera','?')} кам.\n💵 {int(b.total_price)}₽")
+           
     kb = InlineKeyboardBuilder()
-    if b.status == "confirmed":
-        kb.row(InlineKeyboardButton(text="✅ Подтв.", callback_data=f"adm_confirm:{b.id}"),
-               InlineKeyboardButton(text="❌ Отмена", callback_data=f"adm_cancel:{b.id}"))
-    kb.button(text="🔙 Назад", callback_data="admin_bookings_list")
+    kb.row(InlineKeyboardButton(text="🔄 Перенести запись", callback_data=f"adm_transfer:{b.id}"))
+    kb.row(
+        InlineKeyboardButton(text="🔙 Назад", callback_data="admin_bookings_menu"),
+        InlineKeyboardButton(text="❌ Отменить", callback_data=f"adm_cancel:{b.id}")
+    )
     await _send_text(event, txt, kb.as_markup())
 
 @router.callback_query(F.data.startswith("adm_booking:"), F.from_user.id.in_(ADMIN_IDS))
@@ -689,3 +696,87 @@ async def bcast_exec(m: Message, state: FSMContext):
     await state.clear()
     kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
     await m.answer("Готово.", reply_markup=kb.as_markup())
+
+# 🔄 ШАГ 1: Старт переноса
+@router.callback_query(F.data.startswith("adm_transfer:"), F.from_user.id.in_(ADMIN_IDS))
+async def adm_transfer_start(cb: CallbackQuery, state: FSMContext):
+    bid = int(cb.data.split(":")[1])
+    await state.update_data(transfer_bid=bid, transfer_slots=[])
+    await cb.message.edit_text("📅 **Введите новую дату (ДД.ММ):**")
+    await state.set_state(AdminFSM.transfer_wait_date)
+    await cb.answer()
+
+# 📅 ШАГ 2: Ввод даты и показ слотов
+@router.message(AdminFSM.transfer_wait_date, F.from_user.id.in_(ADMIN_IDS))
+async def adm_transfer_date(m: Message, state: FSMContext):
+    try:
+        d, mo = map(int, m.text.strip().split("."))
+        y = datetime.now().year
+        dt = datetime(y, mo, d)
+        if dt.date() < datetime.now().date(): dt = dt.replace(year=y+1)
+        date_str = dt.strftime("%Y-%m-%d")
+        await state.update_data(transfer_date=date_str)
+        
+        async with async_session() as s:
+            res = await s.execute(select(Slot).where(Slot.date == date_str, Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
+            free = res.scalars().all()
+        if not free: return await m.answer("❌ Нет свободных слотов на эту дату.")
+        
+        kb = InlineKeyboardBuilder()
+        for sl in free: kb.row(InlineKeyboardButton(text=f"⏳ {sl.start_time}-{sl.end_time}", callback_data=f"transfer_slot:{sl.id}"))
+        kb.row(InlineKeyboardButton(text="✅ Подтвердить перенос", callback_data="transfer_confirm"))
+        kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_bookings_menu"))
+        await m.answer("⏰ **Выберите новые часы:**\n*(Нажимайте на слоты для выбора)*", reply_markup=kb.as_markup())
+        await state.set_state(AdminFSM.transfer_wait_slots)
+    except: await m.answer("⚠️ Формат: `25.12`")
+
+# ⏰ ШАГ 3: Переключение слотов
+@router.callback_query(F.data.startswith("transfer_slot:"), F.from_user.id.in_(ADMIN_IDS))
+async def adm_transfer_toggle(cb: CallbackQuery, state: FSMContext):
+    sid = int(cb.data.split(":")[1])
+    data = await state.get_data()
+    sel = data.get("transfer_slots", [])
+    if sid in sel: sel.remove(sid)
+    else: sel.append(sid)
+    await state.update_data(transfer_slots=sel)
+    
+    date_str = data["transfer_date"]
+    async with async_session() as s:
+        res = await s.execute(select(Slot).where(Slot.date == date_str, Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
+        free = res.scalars().all()
+    kb = InlineKeyboardBuilder()
+    for sl in free: kb.row(InlineKeyboardButton(text=f"{'✅ ' if sl.id in sel else '⏳ '}{sl.start_time}-{sl.end_time}", callback_data=f"transfer_slot:{sl.id}"))
+    kb.row(InlineKeyboardButton(text="✅ Подтвердить перенос", callback_data="transfer_confirm"))
+    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_bookings_menu"))
+    try: await cb.message.edit_reply_markup(reply_markup=kb.as_markup())
+    except: pass
+    await cb.answer()
+
+# ✅ ШАГ 4: Финальный перенос
+@router.callback_query(F.data == "transfer_confirm", F.from_user.id.in_(ADMIN_IDS))
+async def adm_transfer_confirm(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    bid = data.get("transfer_bid")
+    new_sids = data.get("transfer_slots", [])
+    if not new_sids: return await cb.answer("⚠️ Выберите хотя бы 1 час!", show_alert=True)
+    
+    async with async_session() as s:
+        b = await s.get(Booking, bid)
+        old_sids = json.loads(b.slot_ids)
+        # Освобождаем старые слоты
+        for sid in old_sids:
+            sl = await s.get(Slot, sid)
+            if sl: sl.is_booked = False
+        # Бронируем новые
+        for sid in new_sids:
+            sl = await s.get(Slot, sid)
+            if not sl or sl.is_booked or not sl.is_active:
+                return await cb.answer("❌ Слоты заняты или неактивны", show_alert=True)
+            sl.is_booked = True
+        # Обновляем бронь
+        b.slot_ids = json.dumps(new_sids)
+        await s.commit()
+        
+    await cb.answer("✅ Запись успешно перенесена!")
+    await state.clear()
+    await _show_booking_detail(cb, bid)
