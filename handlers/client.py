@@ -113,12 +113,11 @@ async def go_contact(cb: CallbackQuery): await switch_view(cb, "contact"); await
 async def go_price(cb: CallbackQuery):
     p = get_prices()
     await cb.answer(
-        "🎙️\n\n"
         "📹\n"
         f"1 камера — {p['cam1']}₽\n"
         f"2 камеры — {p['cam2']}₽\n"
         f"3 камеры — {p['cam3']}₽\n\n"
-        "🏢\n"
+        "🎙️\n"
         f"Студия без камер — {p['no_cam']}₽",
         show_alert=True
     )
