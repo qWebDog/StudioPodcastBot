@@ -263,12 +263,17 @@ async def _show_summary(cb, state):
 @router.callback_query(F.data == "book_confirm")
 async def ask_name(cb: CallbackQuery, state: FSMContext):
     await state.set_state(BookFSM.name)
-    txt = f"👤 **Шаг 6/7:** Ваше имя:\n(Сохранено: `{(await get_user(cb.from_user.id)).client_name or '-'}`)"
+    
+    user = await get_user(cb.from_user.id)
+    saved_name = user.client_name if user else "-"
+    
+    txt = f"👤 **Шаг 6/7:** Ваше имя:\n(Сохранено: `{saved_name}`)"
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="⬅️ Назад к итогу", callback_data="book_summary_back"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
     )
-    await edit_booking_msg(cb, state, txt, kb.as_markup()); await cb.answer()
+    await edit_booking_msg(cb, state, txt, kb.as_markup())
+    await cb.answer()
 
 @router.message(BookFSM.name)
 async def save_name(m: Message, state: FSMContext):
