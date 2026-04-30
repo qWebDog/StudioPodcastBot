@@ -548,7 +548,7 @@ async def handle_reminder(cb: CallbackQuery):
     await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
 
 # 📢 Уведомления (🛡 ИСПРАВЛЕНО: параметр  dict)
-async def _notify_new_booking(bot, booking_id: int,  date, times_str: list, total_price: float):
+async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list, total_price: float):
     msg = (
         f"🆕 **Новая бронь #{booking_id}**\n"
         f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
@@ -557,8 +557,10 @@ async def _notify_new_booking(bot, booking_id: int,  date, times_str: list, tota
         f"💰 {int(total_price)}₽"
     )
     for aid in ADMIN_IDS:
-        try: await bot.send_message(aid, msg, parse_mode="Markdown")
-        except Exception as e: logger.error(f"Notify fail {aid}: {e}")
+        try:
+            await bot.send_message(aid, msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"Notify fail {aid}: {e}")
         await asyncio.sleep(0.3)
 
 async def _notify_admins(bot, booking, action):
