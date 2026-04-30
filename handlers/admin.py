@@ -58,16 +58,31 @@ async def _send_text(event, text: str, kb: InlineKeyboardMarkup = None):
 async def _show_admin_menu(event):
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="📋 Все слоты", callback_data="admin_slots_list"),
-        InlineKeyboardButton(text="📖 Все брони", callback_data="admin_bookings_list")
+        InlineKeyboardButton(text="📖 Брони", callback_data="admin_bookings_menu")
     ).row(
         InlineKeyboardButton(text="➕ Создать слот", callback_data="admin_add_slot"),
         InlineKeyboardButton(text="💰 Редактор цен", callback_data="admin_prices")
     ).row(
-        InlineKeyboardButton(text="🗓️ Брони по дате", callback_data="admin_bookings_by_date"),
-        InlineKeyboardButton(text="🔍 Поиск по тел.", callback_data="adm_search_phone")
-    ).row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
-    kb.adjust(2)
+        InlineKeyboardButton(text="🔍 Поиск по тел.", callback_data="adm_search_phone"),
+        InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")
+    )
     await _send_text(event, "🛠️ **Панель администратора:**", kb.as_markup())
+
+@router.message(F.text == "/admin", F.from_user.id.in_(ADMIN_IDS))
+async def cmd_admin(m: Message): await _show_admin_menu(m)
+
+@router.callback_query(F.data == "admin_menu", F.from_user.id.in_(ADMIN_IDS))
+async def admin_menu_cb(cb: CallbackQuery): await _show_admin_menu(cb); await cb.answer()
+
+# 📖 НОВОЕ ПОДМЕНЮ БРОНЕЙ
+@router.callback_query(F.data == "admin_bookings_menu", F.from_user.id.in_(ADMIN_IDS))
+async def admin_bookings_menu(cb: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="📖 Все брони", callback_data="admin_bookings_list"))
+    kb.row(InlineKeyboardButton(text="🗓️ Брони по дате", callback_data="admin_bookings_by_date"))
+    kb.row(InlineKeyboardButton(text="🔙 В главное меню", callback_data="admin_menu"))
+    await _send_text(cb, "📖 **Управление бронями:**", kb.as_markup())
+    await cb.answer()
 
 @router.message(F.text == "/admin", F.from_user.id.in_(ADMIN_IDS))
 async def cmd_admin(m: Message): await _show_admin_menu(m)
@@ -92,7 +107,57 @@ async def _show_slots(event):
     await _send_text(event, "📋 **Слоты (ближайшие 50):**", kb.as_markup())
 
 @router.callback_query(F.data == "admin_slots_list", F.from_user.id.in_(ADMIN_IDS))
-async def admin_slots_cb(cb: CallbackQuery): await _show_slots(cb); await cb.answer()
+async def admin_slots_months(cb: CallbackQuery):
+    today = datetime.now().date().strftime("%Y-%m-%d")
+    async with async_session() as s:
+        res = await s.execute(select(Slot.date).where(Slot.date >= today).distinct().order_by(Slot.date))
+        dates = [r[0] for r in res]
+    if not dates:
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
+        return await _send_text(cb, "📭 Нет будущих слотов.", kb.as_markup())
+    months = {}
+    for d in dates: months.setdefault(d[:7], True)
+    kb = InlineKeyboardBuilder()
+    for ym in sorted(months.keys()):
+        y, m = ym.split("-")
+        kb.row(InlineKeyboardButton(text=f"{m}.{y}", callback_data=f"admin_slots_month:{ym}"))
+    kb.row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
+    await _send_text(cb, "📅 **Выберите месяц:**", kb.as_markup())
+    await cb.answer()
+
+# 📅 ШАГ 2: Дни
+@router.callback_query(F.data.startswith("admin_slots_month:"), F.from_user.id.in_(ADMIN_IDS))
+async def admin_slots_days(cb: CallbackQuery):
+    ym = cb.data.split(":")[1]
+    async with async_session() as s:
+        res = await s.execute(select(Slot.date).where(Slot.date >= datetime.now().date().strftime("%Y-%m-%d"), Slot.date.startswith(ym)).distinct().order_by(Slot.date))
+        dates = [r[0] for r in res]
+    if not dates:
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 К месяцам", callback_data="admin_slots_list"))
+        return await _send_text(cb, "📭 Нет дней.", kb.as_markup())
+    kb = InlineKeyboardBuilder()
+    for d in dates: kb.row(InlineKeyboardButton(text=fmt_date(d), callback_data=f"admin_slots_day:{d}"))
+    kb.row(InlineKeyboardButton(text="🔙 К месяцам", callback_data="admin_slots_list"))
+    await _send_text(cb, f"📅 **Дни в {ym.replace('-', '.')}:**", kb.as_markup())
+    await cb.answer()
+
+# 📋 ШАГ 3: Слоты на день (1 кнопка на строку)
+@router.callback_query(F.data.startswith("admin_slots_day:"), F.from_user.id.in_(ADMIN_IDS))
+async def admin_slots_for_day(cb: CallbackQuery):
+    date_str = cb.data.split(":")[1]
+    async with async_session() as s:
+        res = await s.execute(select(Slot).where(Slot.date == date_str).order_by(Slot.start_time))
+        slots = res.scalars().all()
+    if not slots:
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 К дням", callback_data=f"admin_slots_month:{date_str[:7]}"))
+        return await _send_text(cb, "📭 Нет слотов.", kb.as_markup())
+    kb = InlineKeyboardBuilder()
+    for sl in slots:
+        icon = "🔒" if sl.is_booked else ("✅" if sl.is_active else "❌")
+        kb.row(InlineKeyboardButton(text=f"{icon} {sl.start_time}-{sl.end_time}", callback_data=f"slot_manage:{sl.id}"))
+    kb.row(InlineKeyboardButton(text="🔙 К дням", callback_data=f"admin_slots_month:{date_str[:7]}"))
+    await _send_text(cb, f"📋 **Слоты на {fmt_date(date_str)}:**", kb.as_markup())
+    await cb.answer()
 
 # ➕ Создание слотов на день
 @router.callback_query(F.data == "admin_add_slot", F.from_user.id.in_(ADMIN_IDS))
@@ -179,18 +244,23 @@ async def slot_delete_cb(cb: CallbackQuery):
     await _show_slots(cb); await cb.answer()
 
 # 📖 Список броней
-async def _show_bookings(event):
+sync def _show_bookings(event):
     async with async_session() as s:
         res = await s.execute(select(Booking).order_by(Booking.created_at.desc()).limit(30))
         bks = res.scalars().all()
     if not bks:
-        kb = InlineKeyboardBuilder().button(text="🔙 В меню", callback_data="admin_menu")
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_bookings_menu"))
         return await _send_text(event, "📭 Броней нет.", kb.as_markup())
     kb = InlineKeyboardBuilder()
     for b in bks:
         em = {"confirmed":"🟢","confirmed_reminder":"🔵","cancelled":"🔴"}.get(b.status, "⚪")
-        kb.button(text=f"{em} #{b.id} | {int(b.total_price)}₽", callback_data=f"adm_booking:{b.id}")
-    kb.adjust(1); kb.button(text="🔙 В меню", callback_data="admin_menu")
+        sids = json.loads(b.slot_ids)
+        day_str = "Не указана"
+        if sids:
+            sl = (await s.execute(select(Slot).where(Slot.id == sids[0]))).scalar_one_or_none()
+            if sl: day_str = fmt_date(sl.date)
+        kb.row(InlineKeyboardButton(text=f"{em} #{b.id} | {day_str}", callback_data=f"adm_booking:{b.id}"))
+    kb.row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_bookings_menu"))
     await _send_text(event, "📖 **Последние 30 броней:**", kb.as_markup())
 
 @router.callback_query(F.data == "admin_bookings_list", F.from_user.id.in_(ADMIN_IDS))
