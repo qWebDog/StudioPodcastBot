@@ -489,9 +489,11 @@ async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list,
     time_lines = merge_slots(times_str)
     cam = "Без камер" if data.get("camera_type") == "0" else f"{data.get('camera_type')} кам."
 
+    # ✅ Имя и телефон вынесены на отдельные строки
     msg = (
         f"🆕 **Бронь #{booking_id}**\n"
-        f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
+        f"👤 {data['client_name']}\n"
+        f"📞 `{data['phone']}`\n"
         f"📅 {format_date_display(data['date'])}\n"
         f"⏰ " + "\n⏰ ".join(time_lines) + "\n"
         f"📹 {cam}\n"
@@ -513,14 +515,31 @@ async def _notify_admins(bot, booking, action):
         slot_ids = json.loads(booking.slot_ids)
         slots = (await s.execute(select(Slot).where(Slot.id.in_(slot_ids)).order_by(Slot.start_time))).scalars().all()
 
+        # 🔹 Объединяем смежные интервалы (без указания кол-ва часов)
+        def merge_intervals(times):
+            if not times: return []
+            s_list = sorted([t.split("-") for t in times], key=lambda x: x[0])
+            merged = []
+            curr_start, curr_end = s_list[0]
+            for start, end in s_list[1:]:
+                if start == curr_end:
+                    curr_end = end
+                else:
+                    merged.append(f"{curr_start}-{curr_end}")
+                    curr_start, curr_end = start, end
+            merged.append(f"{curr_start}-{curr_end}")
+            return merged
+
         times = [f"{sl.start_time}-{sl.end_time}" for sl in slots]
+        merged_intervals = merge_intervals(times)
         date_str = format_date_display(slots[0].date) if slots else "Не указано"
-        times_display = ", ".join(times) if times else "-"
 
     if action == "cancelled":
+        intervals_text = "\n".join([f"⏰ {t}" for t in merged_intervals])
         msg = (
             f"❌ **Бронь #{booking.id} отменена**\n"
-            f"📅 {date_str} ⏰ {times_display}\n"
+            f"📅 {date_str}\n"
+            f"{intervals_text}\n"
             f"👤 Клиент: {name}\n"
             f"🆔 ID: {tag}\n"
             f"📞 Телефон: `{phone}`"
