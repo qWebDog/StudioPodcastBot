@@ -11,6 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from database import async_session, Slot, Booking, User
 from config import ADMIN_IDS
+import calendar
 
 router = Router()
 logger = logging.getLogger(__name__)
