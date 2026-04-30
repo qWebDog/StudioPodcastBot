@@ -25,13 +25,14 @@ class BookFSM(StatesGroup):
     phone = State()
     services = State()
 
-# 🔄 Универсальный апдейтер одного сообщения (работает с Message и CallbackQuery)
-async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboardMarkup = None, parse_mode="Markdown"):
+# 🔄 Универсальный апдейтер одного сообщения (безопасно для Message и CallbackQuery)
+async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboardMarkup = None, parse_mode: str = "Markdown"):
     bot = event.bot
-    if hasattr(event, 'message'):  # CallbackQuery
+    # Определяем объект сообщения и chat_id
+    if isinstance(event, CallbackQuery):
         chat_id = event.message.chat.id
         msg_obj = event.message
-    else:                          # Message
+    else:
         chat_id = event.chat.id
         msg_obj = event
 
@@ -43,7 +44,7 @@ async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboa
             await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text, reply_markup=kb, parse_mode=parse_mode)
             return
         except Exception:
-            pass
+            pass  # Fallback: если редактировать нельзя, отправляем новое
 
     new_msg = await msg_obj.answer(text, reply_markup=kb, parse_mode=parse_mode)
     await state.update_data(booking_msg_id=new_msg.message_id)
@@ -537,8 +538,8 @@ async def handle_reminder(cb: CallbackQuery):
     await cb.answer()
     await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
 
-# 📢 Уведомления
-async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, total_price: float):
+# 📢 Уведомления (ИСПРАВЛЕНО: параметр data: dict)
+async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
     msg = (
         f"🆕 **Новая бронь #{booking_id}**\n"
         f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
@@ -547,10 +548,8 @@ async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, tota
         f"💰 {int(total_price)}₽"
     )
     for aid in ADMIN_IDS:
-        try:
-            await bot.send_message(aid, msg, parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"Notify fail {aid}: {e}")
+        try: await bot.send_message(aid, msg, parse_mode="Markdown")
+        except Exception as e: logger.error(f"Notify fail {aid}: {e}")
         await asyncio.sleep(0.3)
 
 async def _notify_admins(bot, booking, action):
