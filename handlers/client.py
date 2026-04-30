@@ -494,3 +494,14 @@ async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, tota
         try: await bot.send_message(aid, msg, parse_mode="Markdown")
         except Exception as e: logger.error(f"Notify fail {aid}: {e}")
         await asyncio.sleep(0.3)
+        
+async def _notify_admins(bot, booking, action):
+    user = await get_user(booking.user_tg_id)
+    tag = f"@{user.username}" if user and user.username else f"ID:{booking.user_tg_id}"
+    msg = f"{'✅' if action == 'confirmed' else '❌'} Клиент {tag} ответил.\n🆔 Бронь #{booking.id}"
+    for aid in ADMIN_IDS:
+        try:
+            await bot.send_message(aid, msg)
+        except Exception as e:
+            logger.error(f"Admin notify fail {aid}: {e}")
+        await asyncio.sleep(0.3)
