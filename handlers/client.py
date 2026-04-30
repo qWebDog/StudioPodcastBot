@@ -147,9 +147,32 @@ async def select_month(cb: CallbackQuery, state: FSMContext):
     await edit_booking_msg(cb, state, "📆 **Шаг 2/6:** Выберите дату:", kb.as_markup())
     await cb.answer()
 
+# 📅 НАЗАД: К месяцам
 @router.callback_query(F.data == "back_to_months")
-async def back_to_months(cb: CallbackQuery, state: FSMContext): await start_booking(cb, state)
+async def back_to_months(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(BookFSM.month)
+    today = datetime.now().date().strftime("%Y-%m-%d")
+    async with async_session() as s:
+        res = await s.execute(select(Slot.date).where(Slot.is_active, ~Slot.is_booked, Slot.date >= today).distinct())
+        dates = [r[0] for r in res]
+    months_dict = {d[:7]: None for d in dates}
+    if not months_dict:
+        txt, kb = "❌ Нет свободных дат.", InlineKeyboardBuilder().row(
+            InlineKeyboardButton(text="📞 Админ", callback_data="view_contact"),
+            InlineKeyboardButton(text="⬅️ Меню", callback_data="view_main")
+        ).as_markup()
+        await cb.message.edit_text(txt, reply_markup=kb)
+        await cb.answer(); return
 
+    kb = InlineKeyboardBuilder()
+    for ym in sorted(months_dict.keys()):
+        y, m = ym.split("-")
+        kb.button(text=f"{MONTH_NAMES[m]} {y}", callback_data=f"book_month:{ym}")
+    kb.adjust(1)
+    kb.row(InlineKeyboardButton(text="⬅️ В главное меню", callback_data="view_main"))
+    await edit_booking_msg(cb, state, "📅 **Шаг 1/6:** Выберите месяц:", kb.as_markup())
+    await cb.answer()
+    
 # ⏰ ШАГ 3/6: Время
 @router.callback_query(F.data.startswith("book_date:"))
 async def select_date(cb: CallbackQuery, state: FSMContext):
@@ -175,9 +198,25 @@ async def select_date(cb: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "back_to_date")
 async def back_to_date(cb: CallbackQuery, state: FSMContext):
-    ym = (await state.get_data()).get("year_month")
-    if ym: await select_month(cb.replace(data=f"book_month:{ym}"), state)
-    else: await start_booking(cb, state)
+    await state.set_state(BookFSM.date)
+    data = await state.get_data()
+    ym = data.get("year_month")
+    if not ym: return await back_to_months(cb, state)  # Fallback
+
+    async with async_session() as s:
+        res = await s.execute(select(Slot.date).where(
+            Slot.is_active, ~Slot.is_booked,
+            Slot.date >= datetime.now().date().strftime("%Y-%m-%d"),
+            Slot.date.startswith(ym)
+        ).distinct().order_by(Slot.date))
+        dates = [r[0] for r in res]
+    if not dates: return await cb.answer("❌ Нет дней в этом месяце", show_alert=True)
+
+    kb = InlineKeyboardBuilder()
+    for d in dates: kb.button(text=format_date_display(d), callback_data=f"book_date:{d}")
+    kb.button(text="⬅️ Назад", callback_data="back_to_months")
+    kb.adjust(1)
+    await edit_booking_msg(cb, state, "📆 **Шаг 2/6:** Выберите дату:", kb.as_markup())
     await cb.answer()
 
 @router.callback_query(F.data.startswith("slot_toggle:"))
@@ -224,8 +263,29 @@ async def select_camera(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "back_to_slots")
 async def back_to_slots(cb: CallbackQuery, state: FSMContext):
     await state.set_state(BookFSM.slots)
-    await finish_slots(cb, state)
+    data = await state.get_data()
+    date_iso = data.get("date")
+    if not date_iso: return await back_to_date(cb, state)
 
+    now, threshold = datetime.now(STUDIO_TZ), datetime.now(STUDIO_TZ) + timedelta(hours=1, minutes=30)
+    async with async_session() as s:
+        res = await s.execute(select(Slot).where(Slot.date == date_iso, Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
+        all_slots = res.scalars().all()
+    slots = []
+    if date_iso == now.strftime("%Y-%m-%d"):
+        for sl in all_slots:
+            if datetime.strptime(f"{date_iso} {sl.start_time}", "%Y-%m-%d %H:%M").replace(tzinfo=STUDIO_TZ) >= threshold:
+                slots.append(sl)
+    else: slots = all_slots
+
+    kb = InlineKeyboardBuilder()
+    sel = data.get("selected_slots", [])
+    for sl in slots: kb.button(text=f"{'✅ ' if sl.id in sel else '⏳ '}{sl.start_time}-{sl.end_time}", callback_data=f"slot_toggle:{sl.id}")
+    kb.button(text="📝 Далее", callback_data="slots_done"); kb.adjust(2)
+    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_date"))
+    await edit_booking_msg(cb, state, "⏰ **Шаг 3/6:** Выберите время:\n💡 *Нажмите на выбранный час, чтобы убрать его*", kb.as_markup())
+    await cb.answer()
+    
 # 📋 ИТОГ
 async def _show_summary(cb, state):
     data = await state.get_data(); p = get_prices()
@@ -243,7 +303,17 @@ async def _show_summary(cb, state):
     await edit_booking_msg(cb, state, txt, kb.as_markup()); await cb.answer()
 
 @router.callback_query(F.data == "back_to_camera")
-async def back_to_camera(cb: CallbackQuery, state: FSMContext): await finish_slots(cb, state)
+async def back_to_camera(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(BookFSM.camera)
+    kb = InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="📹 1 камера", callback_data="camera:1"),
+        InlineKeyboardButton(text="📹 2 камеры", callback_data="camera:2"),
+        InlineKeyboardButton(text="📹 3 камеры", callback_data="camera:3")
+    ).row(
+        InlineKeyboardButton(text="🏢 Студия без камер", callback_data="camera:0")
+    ).row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_slots"))
+    await edit_booking_msg(cb, state, "📹 **Шаг 4/6:** Выберите оборудование:", kb.as_markup())
+    await cb.answer()
 
 # 👤 ШАГ 5/6: Имя / Телефон
 @router.callback_query(F.data == "book_confirm")
@@ -281,8 +351,10 @@ async def enter_new_data(cb: CallbackQuery, state: FSMContext):
     await edit_booking_msg(cb, state, txt, kb.as_markup()); await cb.answer()
 
 @router.callback_query(F.data == "book_summary_back")
-async def back_to_summary(cb: CallbackQuery, state: FSMContext): await _show_summary(cb, state)
-
+async def back_to_summary(cb: CallbackQuery, state: FSMContext):
+    await _show_summary(cb, state)
+    await cb.answer()
+    
 @router.message(BookFSM.name)
 async def save_name(m: Message, state: FSMContext):
     name = m.text.strip()
@@ -303,7 +375,15 @@ async def save_name(m: Message, state: FSMContext):
 @router.callback_query(F.data == "book_name_back")
 async def back_to_name(cb: CallbackQuery, state: FSMContext):
     await state.set_state(BookFSM.name)
-    await enter_new_data(cb, state)
+    user = await get_user(cb.from_user.id)
+    saved_name = user.client_name if user else "-"
+    txt = f"👤 Введите ваше имя:\n(Сохранено: `{saved_name}`)"
+    kb = InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="⬅️ Назад к итогу", callback_data="book_summary_back"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    await edit_booking_msg(cb, state, txt, kb.as_markup())
+    await cb.answer()
 
 @router.message(BookFSM.phone)
 async def save_phone(m: Message, state: FSMContext):
