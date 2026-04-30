@@ -375,7 +375,7 @@ async def handle_reminder(cb: CallbackQuery):
     await cb.answer(); await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
 
 # 📢 Уведомления (✅ ИСПРАВЛЕНО: параметр data: dict)
-async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
+async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, total_price: float):
     cam = "Без камер" if data.get("camera_type") == "0" else f"{data.get('camera_type')} кам."
     msg = f"🆕 **Бронь #{booking_id}**\n👤 {data['client_name']} | 📞 `{data['phone']}`\n📅 {format_date_display(data['date'])} ⏰ {', '.join(times_str)}\n📹 {cam}\n💰 {int(total_price)}₽"
     for aid in ADMIN_IDS:
