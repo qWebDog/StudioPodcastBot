@@ -473,25 +473,51 @@ async def bks_list_cb(cb: CallbackQuery): await _show_bookings(cb); await cb.ans
 # 🔍 Детали брони
 async def _show_booking_detail(event, bid: int):
     async with async_session() as s:
-        b = await s.get(Slot, bid) # Исправлено: Booking, а не Slot
         b = await s.get(Booking, bid)
-        if not b: return await event.answer("❌ Не найдена", show_alert=True) if isinstance(event, CallbackQuery) else await event.answer("❌")
+        if not b:
+            return await event.answer("❌ Бронь не найдена", show_alert=True) if isinstance(event, CallbackQuery) else None
+
         u = (await s.execute(select(User).where(User.tg_id == b.user_tg_id))).scalar_one_or_none()
-        sl_res = await s.execute(select(Slot).where(Slot.id.in_(json.loads(b.slot_ids))))
+        sl_res = await s.execute(select(Slot).where(Slot.id.in_(json.loads(b.slot_ids))).order_by(Slot.start_time))
         sls = sl_res.scalars().all()
         svc = json.loads(b.services) if b.services else {}
-        
-    txt = (f"🆔 **#{b.id}** | `{b.status}`\n👤 {u.client_name if u else '?'} | 📞 `{u.phone if u else '?'}`\n"
-           f"📅 {fmt_date(sls[0].date)} | ⏰ {' | '.join(f'{s.start_time}-{s.end_time}' for s in sls)}\n"
-           f"📹 {svc.get('camera','?')} кам.\n💵 {int(b.total_price)}₽")
-           
-    kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="🔄 Перенести запись", callback_data=f"adm_transfer:{b.id}"))
-    kb.row(
-        InlineKeyboardButton(text="🔙 Назад", callback_data="admin_bookings_menu"),
-        InlineKeyboardButton(text="❌ Отменить", callback_data=f"adm_cancel:{b.id}")
-    )
-    await _send_text(event, txt, kb.as_markup())
+
+        # 🔹 Объединение времени в отрезки с подсчётом часов
+        def format_times(slots):
+            if not slots: return "Нет данных"
+            t = sorted([(str(sl.start_time)[:5], str(sl.end_time)[:5]) for sl in slots])
+            res, s, e, cnt = [], t[0][0], t[0][1], 1
+            for ns, ne in t[1:]:
+                if ns == e: e, cnt = ne, cnt + 1
+                else:
+                    h = "час" if cnt == 1 else "часа" if 2 <= cnt <= 4 else "часов"
+                    res.append(f"{s}-{e} ({cnt} {h})")
+                    s, e, cnt = ns, ne, 1
+            h = "час" if cnt == 1 else "часа" if 2 <= cnt <= 4 else "часов"
+            res.append(f"{s}-{e} ({cnt} {h})")
+            return "\n⏰ ".join(res)
+
+        # 🔹 Форматирование услуг
+        cam = svc.get("camera", "?")
+        services_str = "🏢 Студия без камер" if cam == "0" else f"📹 {cam} кам."
+
+        txt = (
+            f"🆔 **#{b.id}** | `{b.status}`\n"
+            f"👤 {u.client_name if u and u.client_name else 'Не указано'}\n"
+            f"📞 {u.phone if u and u.phone else 'Не указан'}\n"
+            f"📅 {fmt_date(sls[0].date) if sls else 'Не указана'}\n"
+            f"⏰ {format_times(sls)}\n"
+            f"{services_str}\n"
+            f"💵 **{int(b.total_price)}₽**"
+        )
+
+        kb = InlineKeyboardBuilder()
+        kb.row(InlineKeyboardButton(text="🔄 Перенести запись", callback_data=f"adm_transfer:{b.id}"))
+        kb.row(
+            InlineKeyboardButton(text="🔙 Назад", callback_data="admin_bookings_menu"),
+            InlineKeyboardButton(text="❌ Отменить", callback_data=f"adm_cancel:{b.id}")
+        )
+        await _send_text(event, txt, kb.as_markup())
 
 @router.callback_query(F.data.startswith("adm_booking:"), F.from_user.id.in_(ADMIN_IDS))
 async def bks_detail_cb(cb: CallbackQuery): await _show_booking_detail(cb, int(cb.data.split(":")[1])); await cb.answer()
