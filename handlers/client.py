@@ -110,7 +110,7 @@ async def go_main(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "view_price")
 async def go_price(cb: CallbackQuery):
     await cb.answer(
-        "ПРАЙС\n\n🎙️\nАренда — 2000₽/час\n\n📹\n1 Камера — 3000₽/час\n2 Камеры — 3500₽/час\n3 Камеры — 4000₽/час\n\n🎬\nМонтаж — 5000₽/час исходного материала",
+        "\n🎙️\nАренда — 2000₽/час\n\n📹\n1 Камера — 3000₽/час\n2 Камеры — 3500₽/час\n3 Камеры — 4000₽/час\n\n🎬\nМонтаж — 5000₽/час исходного материала",
         show_alert=True
     )
 
