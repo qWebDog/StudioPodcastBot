@@ -104,7 +104,7 @@ async def go_main(cb: CallbackQuery, state: FSMContext): await state.clear(); aw
 @router.callback_query(F.data == "view_price")
 async def go_price(cb: CallbackQuery):
     p = get_prices()
-    await cb.answer(f"ПРАЙС\n\n🎙️ Аренда — {p['rental']}₽/час\n\n📹 1 камера — {p['cam1']}₽\n   2 камеры — {p['cam2']}₽\n   3 камеры — {p['cam3']}₽\n\n🏢 Без камер — {p['no_cam']}₽", show_alert=True)
+    await cb.answer(f"\n📹 \n1 камера — {p['cam1']}₽\n   2 камеры — {p['cam2']}₽\n   3 камеры — {p['cam3']}₽\n\n🏢 Без камер — {p['no_cam']}₽", show_alert=True)
 
 @router.callback_query(F.data == "view_contact")
 async def go_contact(cb: CallbackQuery): await switch_view(cb, "contact"); await cb.answer()
