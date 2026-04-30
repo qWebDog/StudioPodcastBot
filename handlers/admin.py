@@ -59,11 +59,16 @@ async def send_admin_menu(event):
         InlineKeyboardButton(text="🔍 Поиск по тел.", callback_data="adm_search_phone")
     ).row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
     kb.adjust(2)
-    try:
-        await event.message.edit_text("🛠️ **Панель администратора:**", reply_markup=kb.as_markup(), parse_mode="Markdown")
-    except:
-        await event.answer("🛠️ **Панель администратора:**", reply_markup=kb.as_markup(), parse_mode="Markdown")
-
+    
+    text = "🛠️ **Панель администратора:**"
+    if isinstance(event, CallbackQuery):
+        try:
+            await event.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+        except:
+            await event.message.answer(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
+        await event.answer()
+    else:  # Message
+        await event.answer(text, reply_markup=kb.as_markup(), parse_mode="Markdown")
 # 🛠 Команда /admin
 @router.message(F.text == "/admin", F.from_user.id.in_(ADMIN_IDS))
 async def cmd_admin(m: Message):
