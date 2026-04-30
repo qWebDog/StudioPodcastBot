@@ -269,16 +269,53 @@ async def _show_summary(cb, state):
 
 # 👤 ШАГ 5/6: Имя
 @router.callback_query(F.data == "book_confirm")
-async def ask_name(cb: CallbackQuery, state: FSMContext):
-    await state.set_state(BookFSM.name)
+async def check_saved_data(cb: CallbackQuery, state: FSMContext):
     user = await get_user(cb.from_user.id)
-    saved_name = user.client_name if user else "-"
-    txt = f"👤 **Шаг 5/6:** Ваше имя:\n(Сохранено: `{saved_name}`)"
+    if user and user.client_name and user.phone:
+        txt = f"👤 **Данные уже сохранены:**\n👤 Имя: `{user.client_name}`\n📞 Телефон: `{user.phone}`"
+        kb = InlineKeyboardBuilder().row(
+            InlineKeyboardButton(text="✅ Использовать", callback_data="use_saved_data"),
+            InlineKeyboardButton(text="📝 Ввести новые", callback_data="enter_new_data")
+        ).row(
+            InlineKeyboardButton(text="⬅️ Назад к итогу", callback_data="book_summary_back"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+        )
+        await edit_booking_msg(cb, state, txt, kb.as_markup())
+    else:
+        await enter_new_data(cb, state)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "use_saved_data")
+async def use_saved_data(cb: CallbackQuery, state: FSMContext):
+    user = await get_user(cb.from_user.id)
+    if user:
+        await state.update_data(client_name=user.client_name, phone=user.phone)
+        await _create_booking(cb, state)
+    else:
+        await enter_new_data(cb, state)
+
+@router.callback_query(F.data == "enter_new_data")
+async def enter_new_data(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(BookFSM.name)
+    txt = "👤 Введите ваше имя:"
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="⬅️ Назад к итогу", callback_data="book_summary_back"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
     )
-    await edit_booking_msg(cb, state, txt, kb.as_markup()); await cb.answer()
+    await edit_booking_msg(cb, state, txt, kb.as_markup())
+    await cb.answer()
+
+@router.callback_query(F.data == "book_name_back")
+async def back_to_name(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(BookFSM.name)
+    txt = "👤 Введите ваше имя:"
+    kb = InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="⬅️ Назад к итогу", callback_data="book_summary_back"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
+    )
+    await edit_booking_msg(cb, state, txt, kb.as_markup())
+    await cb.answer()
 
 @router.message(BookFSM.name)
 async def save_name(m: Message, state: FSMContext):
@@ -287,31 +324,31 @@ async def save_name(m: Message, state: FSMContext):
     await state.update_data(client_name=name)
     async with async_session() as s:
         u = (await s.execute(select(User).where(User.tg_id == m.from_user.id))).scalar_one_or_none()
-        if not u: s.add(User(tg_id=m.from_user.id, username=m.from_user.username, client_name=name))
-        else: u.client_name = name
+        if not u: 
+            s.add(User(tg_id=m.from_user.id, username=m.from_user.username, client_name=name))
+        else: 
+            u.client_name = name
         await s.commit()
+        
     await state.set_state(BookFSM.phone)
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="⬅️ Назад к имени", callback_data="book_name_back"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
     )
-    await edit_booking_msg(m, state, "📞 **Шаг 6/6:** Телефон (формат `+79991111111`):", kb.as_markup())
-
-# 📱 ШАГ 6/6: Телефон → Финал
-@router.callback_query(F.data == "book_name_back")
-async def back_to_name(cb: CallbackQuery, state: FSMContext): await state.set_state(BookFSM.name); await ask_name(cb, state)
-@router.callback_query(F.data == "book_summary_back")
-async def back_to_summary(cb: CallbackQuery, state: FSMContext): await _show_summary(cb, state)
+    await edit_booking_msg(m, state, "📞 Введите телефон (формат `+79991111111`):", kb.as_markup())
 
 @router.message(BookFSM.phone)
 async def save_phone(m: Message, state: FSMContext):
     phone = m.text.strip()
-    if not validate_phone(phone): return await m.answer("⚠️ Введите строго `+79991111111`", parse_mode="Markdown")
+    if not validate_phone(phone): 
+        return await m.answer("⚠️ Введите строго `+79991111111`", parse_mode="Markdown")
     await state.update_data(phone=phone)
     async with async_session() as s:
         u = (await s.execute(select(User).where(User.tg_id == m.from_user.id))).scalar_one_or_none()
-        if not u: s.add(User(tg_id=m.from_user.id, username=m.from_user.username, phone=phone))
-        else: u.phone = phone
+        if not u: 
+            s.add(User(tg_id=m.from_user.id, username=m.from_user.username, phone=phone))
+        else: 
+            u.phone = phone
         await s.commit()
     await _create_booking(m, state)
 
