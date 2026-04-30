@@ -16,14 +16,21 @@ router = Router()
 logger = logging.getLogger(__name__)
 PRICES_FILE = os.path.join(os.getcwd(), "prices.json")
 
-# 💰 Утилиты для работы с ценами
+class AdminFSM(StatesGroup):
+    add_date = State()
+    add_start = State()
+    add_end = State()
+    waiting_price_key = State()
+    waiting_broadcast = State()
+    waiting_phone_search = State()
+
+# 💰 Загрузка цен (автоматически заменяет старый ключ 'editing' на 'no_cam')
 def load_prices():
     defaults = {"rental": 0, "cam1": 3000, "cam2": 3500, "cam3": 4000, "no_cam": 0}
     try:
         with open(PRICES_FILE, "r") as f:
             saved = json.load(f)
-            # Миграция: если в файле остался старый ключ 'editing', переименовываем его
-            if "editing" in saved and "no_cam" not in saved:
+            if "editing" in saved:
                 saved["no_cam"] = saved.pop("editing")
             return {**defaults, **saved}
     except:
@@ -33,47 +40,14 @@ def save_prices(prices: dict):
     with open(PRICES_FILE, "w") as f:
         json.dump(prices, f)
 
-class AdminFSM(StatesGroup):
-    add_date = State()
-    add_start = State()
-    add_end = State()
-    waiting_price_key = State()
-    waiting_broadcast = State()
-    waiting_phone_search = State()
-
-# 🛠 Утилиты
-def _get_msg(event):
-    """Безопасно получает объект Message из CallbackQuery или Message"""
-    return event.message if isinstance(event, CallbackQuery) else event
-
-async def _show_prices(event):
-    p = load_prices()
-    txt = (f"💰 **Текущие цены:**\n"
-           f"🎙️ Аренда: {p['rental']}₽/час\n"
-           f"📹 1 кам: {p['cam1']}₽\n"
-           f"📹 2 кам: {p['cam2']}₽\n"
-           f"📹 3 кам: {p['cam3']}₽\n"
-           f"🏢 Без камер: {p['no_cam']}₽")
-    
-    kb = InlineKeyboardBuilder().row(
-        InlineKeyboardButton(text="✏️ Аренда", callback_data="set_rental"),
-        InlineKeyboardButton(text="✏️ 1 кам.", callback_data="set_cam1"),
-        InlineKeyboardButton(text="✏️ 2 кам.", callback_data="set_cam2")
-    ).row(
-        InlineKeyboardButton(text="✏️ 3 кам.", callback_data="set_cam3"),
-        InlineKeyboardButton(text="✏️ Без камер", callback_data="set_no_cam")
-    ).row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
-    
-    await _send_text(event, txt, kb.as_markup())
-
-def save_prices(prices: dict):
-    with open(PRICES_FILE, "w") as f: json.dump(prices, f)
-
 def fmt_date(d: str) -> str:
     try:
         dt = datetime.strptime(d, "%Y-%m-%d")
         return f"{dt.day:02d}.{dt.month:02d} {['Пн','Вт','Ср','Чт','Пт','Сб','Вс'][dt.weekday()]}"
     except: return d
+
+def _get_msg(event):
+    return event.message if isinstance(event, CallbackQuery) else event
 
 async def _send_text(event, text: str, kb: InlineKeyboardMarkup = None):
     msg = _get_msg(event)
@@ -81,12 +55,6 @@ async def _send_text(event, text: str, kb: InlineKeyboardMarkup = None):
     except: await msg.answer(text, reply_markup=kb, parse_mode="Markdown")
 
 # 🛠 Главное меню
-@router.message(F.text == "/admin", F.from_user.id.in_(ADMIN_IDS))
-async def cmd_admin(m: Message): await _show_admin_menu(m)
-
-@router.callback_query(F.data == "admin_menu", F.from_user.id.in_(ADMIN_IDS))
-async def admin_menu_cb(cb: CallbackQuery): await _show_admin_menu(cb); await cb.answer()
-
 async def _show_admin_menu(event):
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="📋 Все слоты", callback_data="admin_slots_list"),
@@ -100,6 +68,12 @@ async def _show_admin_menu(event):
     ).row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
     kb.adjust(2)
     await _send_text(event, "🛠️ **Панель администратора:**", kb.as_markup())
+
+@router.message(F.text == "/admin", F.from_user.id.in_(ADMIN_IDS))
+async def cmd_admin(m: Message): await _show_admin_menu(m)
+
+@router.callback_query(F.data == "admin_menu", F.from_user.id.in_(ADMIN_IDS))
+async def admin_menu_cb(cb: CallbackQuery): await _show_admin_menu(cb); await cb.answer()
 
 # 📅 Список слотов
 async def _show_slots(event):
@@ -124,8 +98,7 @@ async def admin_slots_cb(cb: CallbackQuery): await _show_slots(cb); await cb.ans
 @router.callback_query(F.data == "admin_add_slot", F.from_user.id.in_(ADMIN_IDS))
 async def add_slot_start(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_text("📅 **Создать слоты на целый день**\nВведите дату в формате `ДД.ММ`:", parse_mode="Markdown")
-    await state.set_state(AdminFSM.add_date)
-    await cb.answer()
+    await state.set_state(AdminFSM.add_date); await cb.answer()
 
 @router.message(AdminFSM.add_date, F.from_user.id.in_(ADMIN_IDS))
 async def add_slot_date(m: Message, state: FSMContext):
@@ -290,17 +263,17 @@ async def date_bks_cb(cb: CallbackQuery):
     await _send_text(cb, f"📅 Брони на {fmt_date(date_str)}:", kb.as_markup())
     await cb.answer()
 
-# 💰 Цены
+# 💰 РЕДАКТОР ЦЕН (ИСПРАВЛЕНО: editing -> no_cam)
 async def _show_prices(event):
     p = load_prices()
-    txt = f"💰 **Цены:**\n🎙️ Аренда: {p['rental']}₽\n📹 1 кам: {p['cam1']}₽\n📹 2 кам: {p['cam2']}₽\n📹 3 кам: {p['cam3']}₽\n🎬 Монтаж: {p['editing']}₽"
+    txt = (f"💰 **Цены:**\n🎙️ Аренда: {p['rental']}₽\n📹 1 кам: {p['cam1']}₽\n📹 2 кам: {p['cam2']}₽\n📹 3 кам: {p['cam3']}₽\n🏢 Без камер: {p['no_cam']}₽")
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="✏️ Аренда", callback_data="set_rental"),
         InlineKeyboardButton(text="✏️ 1 кам.", callback_data="set_cam1"),
         InlineKeyboardButton(text="✏️ 2 кам.", callback_data="set_cam2")
     ).row(
         InlineKeyboardButton(text="✏️ 3 кам.", callback_data="set_cam3"),
-        InlineKeyboardButton(text="✏️ Монтаж", callback_data="set_editing")
+        InlineKeyboardButton(text="✏️ Без камер", callback_data="set_no_cam")
     ).row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
     await _send_text(event, txt, kb.as_markup())
 
