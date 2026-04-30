@@ -462,11 +462,11 @@ async def handle_reminder(cb: CallbackQuery):
     await cb.answer(); await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
 
 # 📢 Уведомления (✅ ИСПРАВЛЕНО: параметр data: dict)
-async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, total_price: float):
-    # 🔹 Утилита: объединяет подряд идущие интервалы и считает часы
+# 📢 Уведомление о новой брони
+async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list, total_price: float):
+    # 🔹 Утилита: объединяет подряд идущие интервалы и возвращает список строк
     def merge_slots(times):
-        if not times: return ""
-        # Сортируем слоты по времени начала
+        if not times: return []
         slots = sorted([t.split("-") for t in times], key=lambda x: x[0])
         merged = []
         curr_start, curr_end = slots[0]
@@ -484,14 +484,16 @@ async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, tota
 
         h = "час" if count == 1 else "часа" if 2 <= count <= 4 else "часов"
         merged.append(f"{curr_start}-{curr_end} ({count} {h})")
-        return ", ".join(merged)
+        return merged
 
-    formatted_times = merge_slots(times_str)
+    time_lines = merge_slots(times_str)
     cam = "Без камер" if data.get("camera_type") == "0" else f"{data.get('camera_type')} кам."
+
     msg = (
         f"🆕 **Бронь #{booking_id}**\n"
         f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
-        f"📅 {format_date_display(data['date'])} ⏰ {formatted_times}\n"
+        f"📅 {format_date_display(data['date'])}\n"
+        f"⏰ " + "\n⏰ ".join(time_lines) + "\n"
         f"📹 {cam}\n"
         f"💰 {int(total_price)}₽"
     )
@@ -499,14 +501,34 @@ async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, tota
         try: await bot.send_message(aid, msg, parse_mode="Markdown")
         except Exception as e: logger.error(f"Notify fail {aid}: {e}")
         await asyncio.sleep(0.3)
-        
+
+# 📢 Уведомление админам (отмена/подтверждение)
 async def _notify_admins(bot, booking, action):
-    user = await get_user(booking.user_tg_id)
-    tag = f"@{user.username}" if user and user.username else f"ID:{booking.user_tg_id}"
-    msg = f"{'✅' if action == 'confirmed' else '❌'} Клиент {tag} ответил.\n🆔 Бронь #{booking.id}"
+    async with async_session() as s:
+        u = (await s.execute(select(User).where(User.tg_id == booking.user_tg_id))).scalar_one_or_none()
+        name = u.client_name if u else "Не указано"
+        phone = u.phone if u else "Не указан"
+        tag = f"@{u.username}" if u and u.username else f"`{booking.user_tg_id}`"
+
+        slot_ids = json.loads(booking.slot_ids)
+        slots = (await s.execute(select(Slot).where(Slot.id.in_(slot_ids)).order_by(Slot.start_time))).scalars().all()
+
+        times = [f"{sl.start_time}-{sl.end_time}" for sl in slots]
+        date_str = format_date_display(slots[0].date) if slots else "Не указано"
+        times_display = ", ".join(times) if times else "-"
+
+    if action == "cancelled":
+        msg = (
+            f"❌ **Бронь #{booking.id} отменена**\n"
+            f"📅 {date_str} ⏰ {times_display}\n"
+            f"👤 Клиент: {name}\n"
+            f"🆔 ID: {tag}\n"
+            f"📞 Телефон: `{phone}`"
+        )
+    else:
+        msg = f"{'✅' if action == 'confirmed' else '❌'} Клиент {tag} ответил.\n🆔 Бронь #{booking.id}"
+
     for aid in ADMIN_IDS:
-        try:
-            await bot.send_message(aid, msg)
-        except Exception as e:
-            logger.error(f"Admin notify fail {aid}: {e}")
+        try: await bot.send_message(aid, msg, parse_mode="Markdown")
+        except Exception as e: logger.error(f"Admin notify fail {aid}: {e}")
         await asyncio.sleep(0.3)
