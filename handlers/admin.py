@@ -70,16 +70,16 @@ async def _send_text(event, text: str, kb: InlineKeyboardMarkup = None):
     except: await msg.answer(text, reply_markup=kb, parse_mode="Markdown")
 
 # 🛠 Главное меню
-# 🛠 Главное меню (обновлённая кнопка)
 async def _show_admin_menu(event):
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="📋 Все слоты", callback_data="admin_slots_list"),
         InlineKeyboardButton(text="📖 Брони", callback_data="admin_bookings_menu")
     ).row(
-        InlineKeyboardButton(text="➕ Создание слотов", callback_data="admin_create_slot_menu"),
-        InlineKeyboardButton(text="💰 Редактор цен", callback_data="admin_prices")
+        InlineKeyboardButton(text="💰 Редактор цен", callback_data="admin_prices"),
+        InlineKeyboardButton(text="🔍 Поиск по тел.", callback_data="adm_search_phone")
     ).row(
-        InlineKeyboardButton(text="🔍 Поиск по тел.", callback_data="adm_search_phone"),
+        InlineKeyboardButton(text="➕ Создание слотов", callback_data="admin_create_slot_menu")
+    ).row(
         InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")
     )
     await _send_text(event, "🛠️ **Панель администратора:**", kb.as_markup())
