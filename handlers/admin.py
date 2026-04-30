@@ -263,20 +263,23 @@ async def date_bks_cb(cb: CallbackQuery):
     await _send_text(cb, f"📅 Брони на {fmt_date(date_str)}:", kb.as_markup())
     await cb.answer()
 
-# 💰 РЕДАКТОР ЦЕН (ИСПРАВЛЕНО: editing -> no_cam)
+# 💰 РЕДАКТОР ЦЕН 
 async def _show_prices(event):
     p = load_prices()
-    txt = (f"💰 **Цены:**\n🎙️ Аренда: {p['rental']}₽\n📹 1 кам: {p['cam1']}₽\n📹 2 кам: {p['cam2']}₽\n📹 3 кам: {p['cam3']}₽\n🏢 Без камер: {p['no_cam']}₽")
+    txt = (f"💰 **Цены:**\n"
+           f"📹 1 кам: {p['cam1']}₽\n"
+           f"📹 2 кам: {p['cam2']}₽\n"
+           f"📹 3 кам: {p['cam3']}₽\n"
+           f"🏢 Без камер: {p['no_cam']}₽")
     kb = InlineKeyboardBuilder().row(
-        InlineKeyboardButton(text="✏️ Аренда", callback_data="set_rental"),
         InlineKeyboardButton(text="✏️ 1 кам.", callback_data="set_cam1"),
-        InlineKeyboardButton(text="✏️ 2 кам.", callback_data="set_cam2")
+        InlineKeyboardButton(text="✏️ 2 кам.", callback_data="set_cam2"),
+        InlineKeyboardButton(text="✏️ 3 кам.", callback_data="set_cam3")
     ).row(
-        InlineKeyboardButton(text="✏️ 3 кам.", callback_data="set_cam3"),
         InlineKeyboardButton(text="✏️ Без камер", callback_data="set_no_cam")
     ).row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
     await _send_text(event, txt, kb.as_markup())
-
+    
 @router.callback_query(F.data == "admin_prices", F.from_user.id.in_(ADMIN_IDS))
 async def prices_cb(cb: CallbackQuery): await _show_prices(cb); await cb.answer()
 
@@ -284,10 +287,10 @@ async def prices_cb(cb: CallbackQuery): await _show_prices(cb); await cb.answer(
 async def ask_price_cb(cb: CallbackQuery, state: FSMContext):
     await state.update_data(price_key=cb.data.split("_")[1])
     await state.set_state(AdminFSM.waiting_price_key)
-    names = {"rental": "Аренда/час", "cam1": "1 камера", "cam2": "2 камеры", "cam3": "3 камеры", "no_cam": "Студия без камер"}
+    names = {"cam1": "1 камера", "cam2": "2 камеры", "cam3": "3 камеры", "no_cam": "Студия без камер"}
     await cb.message.edit_text(f"💸 Введите цену для `{names[cb.data.split('_')[1]]}` (только число):")
     await cb.answer()
-
+    
 @router.message(AdminFSM.waiting_price_key, F.from_user.id.in_(ADMIN_IDS))
 async def save_price_msg(m: Message, state: FSMContext):
     if not m.text.isdigit(): return await m.answer("⚠️ Только цифры.")
