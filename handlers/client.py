@@ -25,10 +25,9 @@ class BookFSM(StatesGroup):
     phone = State()
     services = State()
 
-# 🔄 Универсальный апдейтер одного сообщения (безопасно для Message и CallbackQuery)
+# 🔄 Универсальный апдейтер одного сообщения
 async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboardMarkup = None, parse_mode: str = "Markdown"):
     bot = event.bot
-    # Определяем объект сообщения и chat_id
     if isinstance(event, CallbackQuery):
         chat_id = event.message.chat.id
         msg_obj = event.message
@@ -44,7 +43,7 @@ async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboa
             await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text, reply_markup=kb, parse_mode=parse_mode)
             return
         except Exception:
-            pass  # Fallback: если редактировать нельзя, отправляем новое
+            pass
 
     new_msg = await msg_obj.answer(text, reply_markup=kb, parse_mode=parse_mode)
     await state.update_data(booking_msg_id=new_msg.message_id)
@@ -110,7 +109,7 @@ async def go_main(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "view_price")
 async def go_price(cb: CallbackQuery):
     await cb.answer(
-        "\n🎙️\nАренда — 2000₽/час\n\n📹\n1 Камера — 3000₽/час\n2 Камеры — 3500₽/час\n3 Камеры — 4000₽/час\n\n🎬\nМонтаж — 5000₽/час исходного материала",
+        "ПРАЙС\n\n🎙️\nАренда — 2000₽/час\n\n📹\n1 Камера — 3000₽/час\n2 Камеры — 3500₽/час\n3 Камеры — 4000₽/час\n\n🎬\nМонтаж — 5000₽/час исходного материала",
         show_alert=True
     )
 
@@ -245,6 +244,7 @@ async def back_to_date(cb: CallbackQuery, state: FSMContext):
     else: await _show_months(cb, state, is_callback=True)
     await cb.answer()
 
+# 🔥 ИСПРАВЛЕНО: Повторный фильтр времени при каждом нажатии
 @router.callback_query(F.data.startswith("slot_toggle:"))
 async def toggle_slot(cb: CallbackQuery, state: FSMContext):
     sid = int(cb.data.split(":")[1])
@@ -256,8 +256,17 @@ async def toggle_slot(cb: CallbackQuery, state: FSMContext):
     
     async with async_session() as s:
         res = await s.execute(select(Slot).where(Slot.date == data["date"], Slot.is_active, ~Slot.is_booked).order_by(Slot.start_time))
-        slots = res.scalars().all()
-    
+        all_slots = res.scalars().all()
+
+    now = datetime.now(STUDIO_TZ)
+    threshold = now + timedelta(hours=1, minutes=30)
+    slots = []
+    if data["date"] == now.strftime("%Y-%m-%d"):
+        for sl in all_slots:
+            slot_dt = datetime.strptime(f"{data['date']} {sl.start_time}", "%Y-%m-%d %H:%M").replace(tzinfo=STUDIO_TZ)
+            if slot_dt >= threshold: slots.append(sl)
+    else: slots = all_slots
+
     kb = InlineKeyboardBuilder()
     for sl in slots:
         is_sel = sl.id in sel
@@ -538,8 +547,8 @@ async def handle_reminder(cb: CallbackQuery):
     await cb.answer()
     await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
 
-# 📢 Уведомления (ИСПРАВЛЕНО: параметр data: dict)
-async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, total_price: float):
+# 📢 Уведомления (🛡 ИСПРАВЛЕНО: параметр  dict)
+async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
     msg = (
         f"🆕 **Новая бронь #{booking_id}**\n"
         f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
