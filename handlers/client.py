@@ -68,30 +68,61 @@ async def switch_view(cb: CallbackQuery, view: str):
     elif view == "contact":
         text = "📞 **Связь с админом:**\n👤 TG: `@ваш_ник`\n📱 Тел: `+79990000000`\n🕒 10:00–22:00"
     elif view == "bookings":
-        today = datetime.now().date().strftime("%Y-%m-%d")
-        async with async_session() as s:
-            res = await s.execute(select(Booking).where(Booking.user_tg_id == cb.from_user.id).order_by(Booking.created_at.desc()).limit(20))
-            all_bookings = res.scalars().all()
-        active = []
-        for b in all_bookings:
-            _, slots, _ = await get_booking_details(b.id)
-            if not slots: continue
-            if slots[0].date >= today and b.status in ["confirmed", "confirmed_reminder"]:
-                active.append((b, slots))
-        if not active:
-            text = "📭 У вас нет активных записей."
-        else:
-            text = "📋 **Ваши записи:**\n"
-            kb = InlineKeyboardBuilder()
-            for b, slots in active:
-                times = " | ".join([f"{sl.start_time}-{sl.end_time}" for sl in slots])
-                text += f"\n🟢 #{b.id} | {format_date_display(slots[0].date)} ⏰ {times}\n💰 {int(b.total_price)}₽"
-                kb.button(text=f"Отменить #{b.id}", callback_data=f"my_cancel:{b.id}")
-            kb.adjust(1)
-            kb.button(text="⬅️ В меню", callback_data="view_main")
-            kb = kb.as_markup()
-    try: await cb.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
-    except: await cb.message.answer(text, reply_markup=kb, parse_mode="Markdown")
+            today = datetime.now().date().strftime("%Y-%m-%d")
+            async with async_session() as s:
+                res = await s.execute(select(Booking).where(Booking.user_tg_id == cb.from_user.id).order_by(Booking.created_at.desc()).limit(20))
+                all_bookings = res.scalars().all()
+
+            active = []
+            for b in all_bookings:
+                _, slots, _ = await get_booking_details(b.id)
+                if not slots: continue
+                if slots[0].date >= today and b.status in ["confirmed", "confirmed_reminder"]:
+                    active.append((b, slots))
+
+            if not active:
+                text = "📭 У вас нет активных записей."
+            else:
+                text = "📋 **Ваши активные записи:**\n"
+                kb = InlineKeyboardBuilder()
+
+                # 🔹 Объединение смежных часов в интервалы
+                def merge_intervals(slts):
+                    if not slts: return ""
+                    times = sorted([(str(sl.start_time)[:5], str(sl.end_time)[:5]) for sl in slts])
+                    merged = []
+                    curr_s, curr_e = times[0]
+                    for s_t, e_t in times[1:]:
+                        if s_t == curr_e:
+                            curr_e = e_t
+                        else:
+                            merged.append(f"{curr_s}-{curr_e}")
+                            curr_s, curr_e = s_t, e_t
+                    merged.append(f"{curr_s}-{curr_e}")
+                    return "\n⏰ ".join(merged)
+
+                admin_id = str(ADMIN_IDS[0]) if ADMIN_IDS else "Не указан"
+
+                for i, (b, slots) in enumerate(active):
+                    # Добавляем разделитель между записями (кроме первой)
+                    if i > 0:
+                        text += "\n➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖\n"
+
+                    date_str = format_date_display(slots[0].date)
+                    times_str = merge_intervals(slots)
+
+                    text += (
+                        f"📅 {date_str}\n"
+                        f"⏰ {times_str}\n"
+                        f"💰 {int(b.total_price)}₽\n"
+                        f"Администратор: `{admin_id}`"
+                    )
+                    # ID записи скрыт от пользователя, но остаётся в callback_data
+                    kb.button(text="❌ Отменить запись", callback_data=f"my_cancel:{b.id}")
+
+                kb.adjust(1)
+                kb.button(text="⬅️ В главное меню", callback_data="view_main")
+                kb = kb.as_markup()
 
 @router.message(F.text == "/start")
 async def cmd_start(m: Message, state: FSMContext):
