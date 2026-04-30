@@ -310,11 +310,11 @@ async def _show_dates_with_bookings(event):
         res = await s.execute(select(Slot.date).where(Slot.is_booked, Slot.date >= today).distinct().order_by(Slot.date.desc()))
         dates = [r[0] for r in res]
     if not dates:
-        kb = InlineKeyboardBuilder().button(text="🔙 В меню", callback_data="admin_menu")
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_bookings_menu"))
         return await _send_text(event, "📭 Нет броней.", kb.as_markup())
     kb = InlineKeyboardBuilder()
-    for d in dates: kb.button(text=fmt_date(d), callback_data=f"adm_bookings_date:{d}")
-    kb.adjust(1); kb.button(text="🔙 В меню", callback_data="admin_menu")
+    for d in dates: kb.row(InlineKeyboardButton(text=fmt_date(d), callback_data=f"adm_bookings_date:{d}"))
+    kb.row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_bookings_menu"))
     await _send_text(event, "🗓️ **Выберите дату:**", kb.as_markup())
 
 @router.callback_query(F.data == "admin_bookings_by_date", F.from_user.id.in_(ADMIN_IDS))
