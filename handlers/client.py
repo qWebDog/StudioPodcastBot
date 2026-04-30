@@ -37,6 +37,16 @@ def get_prices():
             return {**defaults, **saved}
     except: return defaults
 
+def _merge_slots_display(slots):
+    if not slots: return ""
+    times = sorted([(str(sl.start_time)[:5], str(sl.end_time)[:5]) for sl in slots])
+    merged, curr_s, curr_e = [], times[0][0], times[0][1]
+    for ns, ne in times[1:]:
+        if ns == curr_e: curr_e = ne
+        else: merged.append(f"{curr_s}-{curr_e}"); curr_s, curr_e = ns, ne
+    merged.append(f"{curr_s}-{curr_e}")
+    return "\n⏰ ".join(merged)
+
 # 🔄 Универсальный апдейтер одного сообщения
 async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboardMarkup = None, parse_mode: str = "Markdown"):
     bot = event.bot
@@ -484,14 +494,16 @@ async def view_bookings_day_details(cb: CallbackQuery):
 
     txt = f"📅 **Записи на {format_date_display(date_str)}:**\n"
     kb = InlineKeyboardBuilder()
-    admin_id = str(ADMIN_IDS[0]) if ADMIN_IDS else "N/A"
+    # ✅ Меняем цифры на @id
+    admin_tag = f"@{ADMIN_IDS[0]}" if ADMIN_IDS else "Не указан"
+
     for i, (b, slots) in enumerate(day_bookings):
         if i > 0: txt += "\n➖➖➖➖➖➖➖➖➖➖\n"
-        times = " | ".join(f"{sl.start_time}-{sl.end_time}" for sl in slots)
-        txt += f"🆔 #{b.id}\n⏰ {times}\n💰 {int(b.total_price)}₽\nАдминистратор: `{admin_id}`"
+        times_str = _merge_slots_display(slots)
+        txt += f"🆔 #{b.id}\n⏰ {times_str}\n💰 {int(b.total_price)}₽\nАдминистратор: `{admin_tag}`"
         kb.button(text=f"❌ Отменить #{b.id}", callback_data=f"cancel_select:{b.id}")
-    kb.adjust(1)  # Кнопки отмены по 1 в ряд
-    kb.row(InlineKeyboardButton(text="⬅️ К дням", callback_data=f"bkg_month:{date_str[:7]}"))  # 👈 Назад 1 в ряд под всеми
+    kb.adjust(1)
+    kb.row(InlineKeyboardButton(text="⬅️ К дням", callback_data=f"bkg_month:{date_str[:7]}"))
     try: await cb.message.edit_text(txt, reply_markup=kb.as_markup())
     except: await cb.message.answer(txt, reply_markup=kb.as_markup())
     await cb.answer()
@@ -505,11 +517,16 @@ async def cancel_booking_view(cb: CallbackQuery):
             return await cb.answer("⛔ Запись не найдена или уже отменена", show_alert=True)
         sl_res = await s.execute(select(Slot).where(Slot.id.in_(json.loads(b.slot_ids))).order_by(Slot.start_time))
         slots = sl_res.scalars().all()
-    txt = f"❌ **Отмена брони #{b.id}**\nНажмите на слот для отмены:"
+
+    txt = (
+        f"❌ **Отмена брони #{b.id}**\n"
+        f"📅 {format_date_display(slots[0].date)}\n"
+        f"⏰ {_merge_slots_display(slots)}\n\n"
+        "Вы уверены, что хотите отменить запись?"
+    )
     kb = InlineKeyboardBuilder()
-    for sl in slots:
-        kb.row(InlineKeyboardButton(text=f"{format_date_display(sl.date)} | {sl.start_time}-{sl.end_time}", callback_data=f"cancel_do:{b.id}"))
-    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"bkg_date:{slots[0].date}"))
+    kb.row(InlineKeyboardButton(text="✅ Да, отменить", callback_data=f"cancel_do:{b.id}"))
+    kb.row(InlineKeyboardButton(text="❌ Нет, не отменять", callback_data=f"bkg_date:{slots[0].date}"))
     try: await cb.message.edit_text(txt, reply_markup=kb.as_markup())
     except: await cb.message.answer(txt, reply_markup=kb.as_markup())
     await cb.answer()
