@@ -285,10 +285,13 @@ async def prices_cb(cb: CallbackQuery): await _show_prices(cb); await cb.answer(
 
 @router.callback_query(F.data.startswith("set_"), F.from_user.id.in_(ADMIN_IDS))
 async def ask_price_cb(cb: CallbackQuery, state: FSMContext):
-    await state.update_data(price_key=cb.data.split("_")[1])
+    
+    key = cb.data.removeprefix("set_")
+    
+    await state.update_data(price_key=key)
     await state.set_state(AdminFSM.waiting_price_key)
     names = {"cam1": "1 камера", "cam2": "2 камеры", "cam3": "3 камеры", "no_cam": "Студия без камер"}
-    await cb.message.edit_text(f"💸 Введите цену для `{names[cb.data.split('_')[1]]}` (только число):")
+    await cb.message.edit_text(f"💸 Введите цену для `{names[key]}` (только число):")
     await cb.answer()
     
 @router.message(AdminFSM.waiting_price_key, F.from_user.id.in_(ADMIN_IDS))
