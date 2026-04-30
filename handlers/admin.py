@@ -382,6 +382,8 @@ async def admin_slots_months(cb: CallbackQuery):
 
 # 📅 ШАГ 2: Дни
 @router.callback_query(F.data.startswith("admin_slots_month:"), F.from_user.id.in_(ADMIN_IDS))
+# 📅 ШАГ 2: Дни (3 кнопки в строку)
+@router.callback_query(F.data.startswith("admin_slots_month:"), F.from_user.id.in_(ADMIN_IDS))
 async def admin_slots_days(cb: CallbackQuery):
     ym = cb.data.split(":")[1]
     async with async_session() as s:
@@ -390,9 +392,13 @@ async def admin_slots_days(cb: CallbackQuery):
     if not dates:
         kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 К месяцам", callback_data="admin_slots_list"))
         return await _send_text(cb, "📭 Нет дней.", kb.as_markup())
+    
     kb = InlineKeyboardBuilder()
-    for d in dates: kb.row(InlineKeyboardButton(text=fmt_date(d), callback_data=f"admin_slots_day:{d}"))
+    for d in dates:
+        kb.button(text=fmt_date(d), callback_data=f"admin_slots_day:{d}")
+    kb.adjust(3)  # 👈 3 кнопки в строку
     kb.row(InlineKeyboardButton(text="🔙 К месяцам", callback_data="admin_slots_list"))
+    
     await _send_text(cb, f"📅 **Дни в {ym.replace('-', '.')}:**", kb.as_markup())
     await cb.answer()
 
