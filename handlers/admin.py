@@ -44,7 +44,12 @@ def _get_msg(event):
 
 async def _show_prices(event):
     p = load_prices()
-    txt = (f"💰 **Текущие цены:**\n🎙️ Аренда: {p['rental']}₽/час\n📹 1 кам: {p['cam1']}₽\n📹 2 кам: {p['cam2']}₽\n📹 3 кам: {p['cam3']}₽\n🏢 Без камер: {p['no_cam']}₽")
+    txt = (f"💰 **Текущие цены:**\n"
+           f"🎙️ Аренда: {p['rental']}₽/час\n"
+           f"📹 1 кам: {p['cam1']}₽\n"
+           f"📹 2 кам: {p['cam2']}₽\n"
+           f"📹 3 кам: {p['cam3']}₽\n"
+           f"🏢 Без камер: {p['no_cam']}₽")
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="✏️ Аренда", callback_data="set_rental"),
         InlineKeyboardButton(text="✏️ 1 кам.", callback_data="set_cam1"),
