@@ -17,13 +17,27 @@ logger = logging.getLogger(__name__)
 PRICES_FILE = os.path.join(os.getcwd(), "prices.json")
 
 class AdminFSM(StatesGroup):
-    add_date = State()
-    add_start = State()
-    add_end = State()
     waiting_price_key = State()
     waiting_broadcast = State()
     waiting_phone_search = State()
-
+    # Один слот
+    single_date = State()
+    single_start = State()
+    single_end = State()
+    # День
+    day_date = State()
+    day_start = State()
+    day_end = State()
+    # Месяц
+    month_month = State()
+    month_start = State()
+    month_end = State()
+    # Период
+    period_start_date = State()
+    period_end_date = State()
+    period_start = State()
+    period_end = State()
+    
 # 💰 Загрузка цен (автоматически заменяет старый ключ 'editing' на 'no_cam')
 def load_prices():
     defaults = {"rental": 0, "cam1": 3000, "cam2": 3500, "cam3": 4000, "no_cam": 0}
@@ -55,12 +69,13 @@ async def _send_text(event, text: str, kb: InlineKeyboardMarkup = None):
     except: await msg.answer(text, reply_markup=kb, parse_mode="Markdown")
 
 # 🛠 Главное меню
+# 🛠 Главное меню (обновлённая кнопка)
 async def _show_admin_menu(event):
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="📋 Все слоты", callback_data="admin_slots_list"),
         InlineKeyboardButton(text="📖 Брони", callback_data="admin_bookings_menu")
     ).row(
-        InlineKeyboardButton(text="➕ Создать слот", callback_data="admin_add_slot"),
+        InlineKeyboardButton(text="➕ Создание слотов", callback_data="admin_create_slot_menu"),
         InlineKeyboardButton(text="💰 Редактор цен", callback_data="admin_prices")
     ).row(
         InlineKeyboardButton(text="🔍 Поиск по тел.", callback_data="adm_search_phone"),
@@ -70,9 +85,245 @@ async def _show_admin_menu(event):
 
 @router.message(F.text == "/admin", F.from_user.id.in_(ADMIN_IDS))
 async def cmd_admin(m: Message): await _show_admin_menu(m)
-
 @router.callback_query(F.data == "admin_menu", F.from_user.id.in_(ADMIN_IDS))
 async def admin_menu_cb(cb: CallbackQuery): await _show_admin_menu(cb); await cb.answer()
+
+# ➕ ПОДМЕНЮ СОЗДАНИЯ СЛОТОВ
+@router.callback_query(F.data == "admin_create_slot_menu", F.from_user.id.in_(ADMIN_IDS))
+async def create_slot_menu(cb: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="📅 Один слот", callback_data="create_single"))
+    kb.row(InlineKeyboardButton(text="📆 Слоты на день", callback_data="create_day"))
+    kb.row(InlineKeyboardButton(text="🗓️ Слоты на месяц", callback_data="create_month"))
+    kb.row(InlineKeyboardButton(text="📅 Слоты период", callback_data="create_period"))
+    kb.row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
+    await _send_text(cb, "➕ **Выберите режим создания:**", kb.as_markup())
+    await cb.answer()
+
+# 🔹 1. ОДИН СЛОТ
+@router.callback_query(F.data == "create_single", F.from_user.id.in_(ADMIN_IDS))
+async def start_single(cb: CallbackQuery, state: FSMContext):
+    await cb.message.edit_text("📅 **Один слот**\nВведите дату (`ДД.ММ`):")
+    await state.set_state(AdminFSM.single_date); await cb.answer()
+
+@router.message(AdminFSM.single_date, F.from_user.id.in_(ADMIN_IDS))
+async def single_date(m: Message, state: FSMContext):
+    try:
+        d, mo = map(int, m.text.strip().split("."))
+        y = datetime.now().year
+        dt = datetime(y, mo, d)
+        if dt.date() < datetime.now().date(): dt = dt.replace(year=y+1)
+        await state.update_data(slot_date=dt.strftime("%Y-%m-%d"))
+        await m.answer("⏰ Время начала (`ЧЧ:ММ`):")
+        await state.set_state(AdminFSM.single_start)
+    except: await m.answer("⚠️ Формат: `25.12`")
+
+@router.message(AdminFSM.single_start, F.from_user.id.in_(ADMIN_IDS))
+async def single_start(m: Message, state: FSMContext):
+    try:
+        h, mi = map(int, m.text.strip().split(":"))
+        if not (0<=h<=23 and 0<=mi<=59): raise ValueError
+        await state.update_data(slot_start=f"{h:02d}:{mi:02d}")
+        await m.answer("⏰ Время окончания (`ЧЧ:ММ`):")
+        await state.set_state(AdminFSM.single_end)
+    except: await m.answer("⚠️ Формат: `22:00`")
+
+@router.message(AdminFSM.single_end, F.from_user.id.in_(ADMIN_IDS))
+async def single_end(m: Message, state: FSMContext):
+    try:
+        he, me = map(int, m.text.strip().split(":"))
+        if not (0<=he<=23 and 0<=me<=59): raise ValueError
+        data = await state.get_data()
+        s_dt = datetime.strptime(data["slot_start"], "%H:%M")
+        e_dt = datetime.strptime(f"{he:02d}:{me:02d}", "%H:%M")
+        if (e_dt - s_dt).total_seconds() <= 3600: return await m.answer("❌ Минимум 1 час.")
+        async with async_session() as s:
+            s.add(Slot(date=data["slot_date"], start_time=data["slot_start"], end_time=f"{he:02d}:{me:02d}", price=0.0, is_active=True, is_booked=False))
+            await s.commit()
+        await m.answer(f"✅ Слот создан: {data['slot_date']} | {data['slot_start']}-{he:02d}:{me:02d}")
+        await state.clear()
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
+        await m.answer("✅ Готово.", reply_markup=kb.as_markup())
+    except Exception as e: await m.answer(f"⚠️ Ошибка: {e}")
+
+# 🔹 2. СЛОТЫ НА ДЕНЬ
+@router.callback_query(F.data == "create_day", F.from_user.id.in_(ADMIN_IDS))
+async def start_day(cb: CallbackQuery, state: FSMContext):
+    await cb.message.edit_text("📆 **Слоты на день**\nВведите дату (`ДД.ММ`):")
+    await state.set_state(AdminFSM.day_date); await cb.answer()
+
+@router.message(AdminFSM.day_date, F.from_user.id.in_(ADMIN_IDS))
+async def day_date(m: Message, state: FSMContext):
+    try:
+        d, mo = map(int, m.text.strip().split("."))
+        y = datetime.now().year
+        dt = datetime(y, mo, d)
+        if dt.date() < datetime.now().date(): dt = dt.replace(year=y+1)
+        await state.update_data(slot_date=dt.strftime("%Y-%m-%d"))
+        await m.answer("⏰ Время начала (`ЧЧ:ММ`):")
+        await state.set_state(AdminFSM.day_start)
+    except: await m.answer("⚠️ Формат: `25.12`")
+
+@router.message(AdminFSM.day_start, F.from_user.id.in_(ADMIN_IDS))
+async def day_start(m: Message, state: FSMContext):
+    try:
+        h, mi = map(int, m.text.strip().split(":"))
+        if not (0<=h<=23 and 0<=mi<=59): raise ValueError
+        await state.update_data(slot_start=f"{h:02d}:{mi:02d}")
+        await m.answer("⏰ Время окончания (`ЧЧ:ММ`):")
+        await state.set_state(AdminFSM.day_end)
+    except: await m.answer("⚠️ Формат: `22:00`")
+
+@router.message(AdminFSM.day_end, F.from_user.id.in_(ADMIN_IDS))
+async def day_end(m: Message, state: FSMContext):
+    try:
+        he, me = map(int, m.text.strip().split(":"))
+        if not (0<=he<=23 and 0<=me<=59): raise ValueError
+        data = await state.get_data()
+        s_dt = datetime.strptime(data["slot_start"], "%H:%M")
+        e_dt = datetime.strptime(f"{he:02d}:{me:02d}", "%H:%M")
+        slots = []; cur = s_dt
+        while cur < e_dt:
+            nxt = cur + timedelta(hours=1)
+            if nxt > e_dt: break
+            slots.append((cur.strftime("%H:%M"), nxt.strftime("%H:%M"))); cur = nxt
+        if not slots: return await m.answer("❌ Минимум 1 час.")
+        async with async_session() as s:
+            if (await s.execute(select(Slot).where(Slot.date == data["slot_date"]))).first():
+                return await m.answer("⚠️ Слоты на эту дату уже есть.")
+            for st, et in slots: s.add(Slot(date=data["slot_date"], start_time=st, end_time=et, price=0.0, is_active=True, is_booked=False))
+            await s.commit()
+        await m.answer(f"✅ Создано {len(slots)} слотов на {data['slot_date']}")
+        await state.clear()
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
+        await m.answer("✅ Готово.", reply_markup=kb.as_markup())
+    except Exception as e: await m.answer(f"⚠️ Ошибка: {e}")
+
+# 🔹 3. СЛОТЫ НА МЕСЯЦ
+@router.callback_query(F.data == "create_month", F.from_user.id.in_(ADMIN_IDS))
+async def start_month(cb: CallbackQuery, state: FSMContext):
+    await cb.message.edit_text("🗓️ **Слоты на месяц**\nВведите месяц (`ММ.ГГГГ`):")
+    await state.set_state(AdminFSM.month_month); await cb.answer()
+
+@router.message(AdminFSM.month_month, F.from_user.id.in_(ADMIN_IDS))
+async def month_month(m: Message, state: FSMContext):
+    try:
+        mo, y = map(int, m.text.strip().split("."))
+        dt = datetime(y, mo, 1)
+        await state.update_data(slot_month=dt.strftime("%Y-%m"))
+        await m.answer("⏰ Время начала (`ЧЧ:ММ`):")
+        await state.set_state(AdminFSM.month_start)
+    except: await m.answer("⚠️ Формат: `05.2024`")
+
+@router.message(AdminFSM.month_start, F.from_user.id.in_(ADMIN_IDS))
+async def month_start(m: Message, state: FSMContext):
+    try:
+        h, mi = map(int, m.text.strip().split(":"))
+        if not (0<=h<=23 and 0<=mi<=59): raise ValueError
+        await state.update_data(slot_start=f"{h:02d}:{mi:02d}")
+        await m.answer("⏰ Время окончания (`ЧЧ:ММ`):")
+        await state.set_state(AdminFSM.month_end)
+    except: await m.answer("⚠️ Формат: `22:00`")
+
+@router.message(AdminFSM.month_end, F.from_user.id.in_(ADMIN_IDS))
+async def month_end(m: Message, state: FSMContext):
+    try:
+        he, me = map(int, m.text.strip().split(":"))
+        data = await state.get_data()
+        s_dt = datetime.strptime(data["slot_start"], "%H:%M")
+        e_dt = datetime.strptime(f"{he:02d}:{me:02d}", "%H:%M")
+        if (e_dt - s_dt).total_seconds() <= 3600: return await m.answer("❌ Минимум 1 час.")
+        
+        month_str = data["slot_month"]
+        first = datetime.strptime(month_str + "-01", "%Y-%m-%d")
+        days_count = calendar.monthrange(first.year, first.month)[1]
+        created = 0
+        async with async_session() as s:
+            for i in range(days_count):
+                day_dt = first + timedelta(days=i)
+                day_str = day_dt.strftime("%Y-%m-%d")
+                if (await s.execute(select(Slot).where(Slot.date == day_str))).first(): continue
+                cur = s_dt
+                while cur < e_dt:
+                    nxt = cur + timedelta(hours=1)
+                    if nxt > e_dt: break
+                    s.add(Slot(date=day_str, start_time=cur.strftime("%H:%M"), end_time=nxt.strftime("%H:%M"), price=0.0, is_active=True, is_booked=False))
+                    cur = nxt
+                created += 1
+            await s.commit()
+        await m.answer(f"✅ Созданы слоты на {created} дней в {month_str.replace('-', '.')}")
+        await state.clear()
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
+        await m.answer("✅ Готово.", reply_markup=kb.as_markup())
+    except Exception as e: await m.answer(f"⚠️ Ошибка: {e}")
+
+# 🔹 4. СЛОТЫ ПЕРИОД
+@router.callback_query(F.data == "create_period", F.from_user.id.in_(ADMIN_IDS))
+async def start_period(cb: CallbackQuery, state: FSMContext):
+    await cb.message.edit_text("📅 **Слоты период**\nДата начала (`ДД.ММ.ГГГГ`):")
+    await state.set_state(AdminFSM.period_start_date); await cb.answer()
+
+@router.message(AdminFSM.period_start_date, F.from_user.id.in_(ADMIN_IDS))
+async def period_start_date(m: Message, state: FSMContext):
+    try:
+        dt = datetime.strptime(m.text.strip(), "%d.%m.%Y")
+        await state.update_data(period_start=dt.strftime("%Y-%m-%d"))
+        await m.answer("📅 Дата окончания (`ДД.ММ.ГГГГ`):")
+        await state.set_state(AdminFSM.period_end_date)
+    except: await m.answer("⚠️ Формат: `25.12.2024`")
+
+@router.message(AdminFSM.period_end_date, F.from_user.id.in_(ADMIN_IDS))
+async def period_end_date(m: Message, state: FSMContext):
+    try:
+        dt = datetime.strptime(m.text.strip(), "%d.%m.%Y")
+        await state.update_data(period_end=dt.strftime("%Y-%m-%d"))
+        await m.answer("⏰ Время начала (`ЧЧ:ММ`):")
+        await state.set_state(AdminFSM.period_start)
+    except: await m.answer("⚠️ Формат: `25.12.2024`")
+
+@router.message(AdminFSM.period_start, F.from_user.id.in_(ADMIN_IDS))
+async def period_start(m: Message, state: FSMContext):
+    try:
+        h, mi = map(int, m.text.strip().split(":"))
+        if not (0<=h<=23 and 0<=mi<=59): raise ValueError
+        await state.update_data(slot_start=f"{h:02d}:{mi:02d}")
+        await m.answer("⏰ Время окончания (`ЧЧ:ММ`):")
+        await state.set_state(AdminFSM.period_end)
+    except: await m.answer("⚠️ Формат: `22:00`")
+
+@router.message(AdminFSM.period_end, F.from_user.id.in_(ADMIN_IDS))
+async def period_end(m: Message, state: FSMContext):
+    try:
+        he, me = map(int, m.text.strip().split(":"))
+        data = await state.get_data()
+        s_dt = datetime.strptime(data["slot_start"], "%H:%M")
+        e_dt = datetime.strptime(f"{he:02d}:{me:02d}", "%H:%M")
+        if (e_dt - s_dt).total_seconds() <= 3600: return await m.answer("❌ Минимум 1 час.")
+        
+        start_d = datetime.strptime(data["period_start"], "%Y-%m-%d")
+        end_d = datetime.strptime(data["period_end"], "%Y-%m-%d")
+        days = (end_d - start_d).days + 1
+        if days <= 0: return await m.answer("❌ Конец раньше начала.")
+        
+        created = 0
+        async with async_session() as s:
+            for i in range(days):
+                day_dt = start_d + timedelta(days=i)
+                day_str = day_dt.strftime("%Y-%m-%d")
+                if (await s.execute(select(Slot).where(Slot.date == day_str))).first(): continue
+                cur = s_dt
+                while cur < e_dt:
+                    nxt = cur + timedelta(hours=1)
+                    if nxt > e_dt: break
+                    s.add(Slot(date=day_str, start_time=cur.strftime("%H:%M"), end_time=nxt.strftime("%H:%M"), price=0.0, is_active=True, is_booked=False))
+                    cur = nxt
+                created += 1
+            await s.commit()
+        await m.answer(f"✅ Созданы слоты на {created} дней в период")
+        await state.clear()
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
+        await m.answer("✅ Готово.", reply_markup=kb.as_markup())
+    except Exception as e: await m.answer(f"⚠️ Ошибка: {e}")
 
 # 📖 НОВОЕ ПОДМЕНЮ БРОНЕЙ
 @router.callback_query(F.data == "admin_bookings_menu", F.from_user.id.in_(ADMIN_IDS))
