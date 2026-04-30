@@ -754,29 +754,64 @@ async def adm_transfer_toggle(cb: CallbackQuery, state: FSMContext):
 
 # ✅ ШАГ 4: Финальный перенос
 @router.callback_query(F.data == "transfer_confirm", F.from_user.id.in_(ADMIN_IDS))
+@router.callback_query(F.data == "transfer_confirm", F.from_user.id.in_(ADMIN_IDS))
 async def adm_transfer_confirm(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     bid = data.get("transfer_bid")
     new_sids = data.get("transfer_slots", [])
     if not new_sids: return await cb.answer("⚠️ Выберите хотя бы 1 час!", show_alert=True)
-    
+
     async with async_session() as s:
         b = await s.get(Booking, bid)
         old_sids = json.loads(b.slot_ids)
+
+        # Получаем объекты старых и новых слотов для уведомления
+        old_slots = (await s.execute(select(Slot).where(Slot.id.in_(old_sids)).order_by(Slot.start_time))).scalars().all()
+
         # Освобождаем старые слоты
         for sid in old_sids:
             sl = await s.get(Slot, sid)
             if sl: sl.is_booked = False
-        # Бронируем новые
+
+        # Бронируем новые слоты
         for sid in new_sids:
             sl = await s.get(Slot, sid)
             if not sl or sl.is_booked or not sl.is_active:
-                return await cb.answer("❌ Слоты заняты или неактивны", show_alert=True)
+                return await cb.answer("❌ Выбранные слоты уже заняты", show_alert=True)
             sl.is_booked = True
+
+        new_slots = (await s.execute(select(Slot).where(Slot.id.in_(new_sids)).order_by(Slot.start_time))).scalars().all()
+
         # Обновляем бронь
         b.slot_ids = json.dumps(new_sids)
         await s.commit()
-        
+
+        # 📩 Отправляем уведомление клиенту
+        await _notify_client_transfer(cb.bot, b.user_tg_id, bid, old_slots, new_slots)
+
     await cb.answer("✅ Запись успешно перенесена!")
     await state.clear()
     await _show_booking_detail(cb, bid)
+
+# 📩 Уведомление клиенту о переносе записи
+async def _notify_client_transfer(bot, user_tg_id: int, booking_id: int, old_slots, new_slots):
+    old_date = fmt_date(old_slots[0].date) if old_slots else "Не указана"
+    new_date = fmt_date(new_slots[0].date) if new_slots else "Не указана"
+    old_times = " | ".join(f"{s.start_time}-{s.end_time}" for s in old_slots)
+    new_times = " | ".join(f"{s.start_time}-{s.end_time}" for s in new_slots)
+
+    msg = (
+        f"🔄 **Ваша запись #{booking_id} перенесена!**\n\n"
+        f"❌ Было:\n📅 {old_date}\n⏰ {old_times}\n\n"
+        f"✅ Стало:\n📅 {new_date}\n⏰ {new_times}\n\n"
+        f"Если новое время не подходит, свяжитесь с нами:"
+    )
+
+    kb = InlineKeyboardBuilder()
+    # 🔗 Замените ссылку на юзернейм админа или техподдержки
+    kb.row(InlineKeyboardButton(text="📞 Связаться с админом", url="https://t.me/ВАШ_АДМИН_ЮЗЕРНЕЙМ"))
+    
+    try:
+        await bot.send_message(user_tg_id, msg, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    except Exception as e:
+        logger.warning(f"Не удалось уведомить клиента {user_tg_id} о переносе: {e}")
