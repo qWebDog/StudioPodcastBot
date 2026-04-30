@@ -15,7 +15,7 @@ from config import ADMIN_IDS
 
 router = Router()
 logger = logging.getLogger(__name__)
-STUDIO_TZ = ZoneInfo("Europe/Moscow")
+STUDIO_TZ = ZoneInfo("Europe/Moscow")  # 🌍 Часовой пояс студии
 
 class BookFSM(StatesGroup):
     month = State()
@@ -25,12 +25,16 @@ class BookFSM(StatesGroup):
     phone = State()
     services = State()
 
-# 🔄 Универсальный апдейтер одного сообщения
+# 🔄 Универсальный апдейтер одного сообщения (работает с Message и CallbackQuery)
 async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboardMarkup = None, parse_mode="Markdown"):
     bot = event.bot
-    # ✅ Безопасно извлекаем chat_id (работает и для Message, и для CallbackQuery)
-    chat_id = event.message.chat.id if hasattr(event, 'message') else event.chat.id
-    
+    if hasattr(event, 'message'):  # CallbackQuery
+        chat_id = event.message.chat.id
+        msg_obj = event.message
+    else:                          # Message
+        chat_id = event.chat.id
+        msg_obj = event
+
     data = await state.get_data()
     msg_id = data.get("booking_msg_id")
 
@@ -39,12 +43,12 @@ async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboa
             await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text, reply_markup=kb, parse_mode=parse_mode)
             return
         except Exception:
-            pass  # Если редактирование недоступно (старое сообщение, права и т.д.), идём в fallback
+            pass
 
-    new_msg = await event.message.answer(text, reply_markup=kb, parse_mode=parse_mode)
+    new_msg = await msg_obj.answer(text, reply_markup=kb, parse_mode=parse_mode)
     await state.update_data(booking_msg_id=new_msg.message_id)
-    
-# 🔄 Единый переключатель главного меню
+
+# 🔄 Переключатель главного меню
 async def switch_view(cb: CallbackQuery, view: str):
     text = ""
     kb = back_to_menu_kb()
@@ -97,7 +101,10 @@ async def cmd_start(m: Message, state: FSMContext):
     await m.answer("🎙️ Добро пожаловать! Выберите действие:", reply_markup=client_main_kb())
 
 @router.callback_query(F.data == "view_main")
-async def go_main(cb: CallbackQuery): await switch_view(cb, "main"); await cb.answer()
+async def go_main(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await switch_view(cb, "main")
+    await cb.answer()
 
 @router.callback_query(F.data == "view_price")
 async def go_price(cb: CallbackQuery):
@@ -107,10 +114,14 @@ async def go_price(cb: CallbackQuery):
     )
 
 @router.callback_query(F.data == "view_contact")
-async def go_contact(cb: CallbackQuery): await switch_view(cb, "contact"); await cb.answer()
+async def go_contact(cb: CallbackQuery):
+    await switch_view(cb, "contact")
+    await cb.answer()
 
 @router.callback_query(F.data == "view_bookings")
-async def go_bookings(cb: CallbackQuery): await switch_view(cb, "bookings"); await cb.answer()
+async def go_bookings(cb: CallbackQuery):
+    await switch_view(cb, "bookings")
+    await cb.answer()
 
 # 📅 ШАГ 1/6: Месяцы
 @router.callback_query(F.data == "book_start")
@@ -146,7 +157,6 @@ async def _show_months(event, state: FSMContext, is_callback: bool = False):
         kb.button(text=f"{MONTH_NAMES[month]} {year}", callback_data=f"book_month:{ym}")
     kb.adjust(1)
     kb.row(InlineKeyboardButton(text="⬅️ В главное меню", callback_data="view_main"))
-    
     await edit_booking_msg(event, state, txt, kb.as_markup())
 
 @router.callback_query(F.data.startswith("book_month:"))
@@ -319,7 +329,6 @@ async def save_name(m: Message, state: FSMContext):
         if not user: s.add(User(tg_id=m.from_user.id, username=m.from_user.username, client_name=name))
         else: user.client_name = name
         await s.commit()
-        
     await state.set_state(BookFSM.phone)
     txt = "📞 **Шаг 5/6:** Введите номер телефона:"
     kb = InlineKeyboardBuilder().row(
@@ -340,7 +349,6 @@ async def save_phone(m: Message, state: FSMContext):
         if not user: s.add(User(tg_id=m.from_user.id, username=m.from_user.username, phone=phone))
         else: user.phone = phone
         await s.commit()
-        
     await _show_services(m, state)
 
 @router.callback_query(F.data == "back_to_slots")
