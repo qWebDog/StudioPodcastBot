@@ -6,18 +6,16 @@ from datetime import datetime, timedelta
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
-from database import async_session, Slot, Booking, User, get_user
+from database import async_session, Slot, Booking, User
 from config import ADMIN_IDS
-
 
 router = Router()
 logger = logging.getLogger(__name__)
 PRICES_FILE = os.path.join(os.getcwd(), "prices.json")
 
-# 🔄 Состояния админки
 class AdminFSM(StatesGroup):
     add_date = State()
     add_start = State()
@@ -26,40 +24,30 @@ class AdminFSM(StatesGroup):
     waiting_broadcast = State()
     waiting_phone_search = State()
 
-# 🛠 Команда /admin
-@router.message(F.text == "/admin", F.from_user.id.in_(ADMIN_IDS))
-async def cmd_admin(m: Message):
-    kb = InlineKeyboardBuilder().row(
-        InlineKeyboardButton(text="📋 Все слоты", callback_data="admin_slots_list"),
-        InlineKeyboardButton(text="📖 Все брони", callback_data="admin_bookings_list")
-    ).row(
-        InlineKeyboardButton(text="➕ Создать слот", callback_data="admin_add_slot"),
-        InlineKeyboardButton(text="💰 Редактор цен", callback_data="admin_prices")
-    ).row(
-        InlineKeyboardButton(text="🗓️ Брони по дате", callback_data="admin_bookings_by_date"),
-        InlineKeyboardButton(text="🔍 Поиск по тел.", callback_data="adm_search_phone")
-    ).row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
-    kb.adjust(2)
-    await m.answer("🛠️ **Панель администратора:**", reply_markup=kb.as_markup(), parse_mode="Markdown")
-
-# 💰 Работа с ценами
+# 💰 Управление ценами
 def load_prices():
     defaults = {"rental": 2000, "cam1": 3000, "cam2": 3500, "cam3": 4000, "editing": 5000}
     try:
-        with open(PRICES_FILE, "r") as f: return {**defaults, **json.load(f)}
-    except: return defaults
+        with open(PRICES_FILE, "r") as f:
+            saved = json.load(f)
+            return {**defaults, **saved}
+    except:
+        return defaults
 
 def save_prices(prices: dict):
-    with open(PRICES_FILE, "w") as f: json.dump(prices, f)
+    with open(PRICES_FILE, "w") as f:
+        json.dump(prices, f)
 
 def fmt_date(d: str) -> str:
-    dt = datetime.strptime(d, "%Y-%m-%d")
-    days = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"]
-    return f"{dt.day:02d}.{dt.month:02d} {days[dt.weekday()]}"
+    try:
+        dt = datetime.strptime(d, "%Y-%m-%d")
+        days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+        return f"{dt.day:02d}.{dt.month:02d} {days[dt.weekday()]}"
+    except:
+        return d
 
-# 🛠 Главное меню админа
-@router.callback_query(F.data == "admin_menu", F.from_user.id.in_(ADMIN_IDS))
-async def admin_menu(cb: CallbackQuery):
+# 🛠 Универсальная функция отправки меню (без FSMContext)
+async def send_admin_menu(event):
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="📋 Все слоты", callback_data="admin_slots_list"),
         InlineKeyboardButton(text="📖 Все брони", callback_data="admin_bookings_list")
@@ -71,19 +59,32 @@ async def admin_menu(cb: CallbackQuery):
         InlineKeyboardButton(text="🔍 Поиск по тел.", callback_data="adm_search_phone")
     ).row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
     kb.adjust(2)
-    await cb.message.edit_text("🛠️ **Панель администратора:**", reply_markup=kb.as_markup(), parse_mode="Markdown")
+    try:
+        await event.message.edit_text("🛠️ **Панель администратора:**", reply_markup=kb.as_markup(), parse_mode="Markdown")
+    except:
+        await event.answer("🛠️ **Панель администратора:**", reply_markup=kb.as_markup(), parse_mode="Markdown")
+
+# 🛠 Команда /admin
+@router.message(F.text == "/admin", F.from_user.id.in_(ADMIN_IDS))
+async def cmd_admin(m: Message):
+    await send_admin_menu(m)
+
+@router.callback_query(F.data == "admin_menu", F.from_user.id.in_(ADMIN_IDS))
+async def admin_menu(cb: CallbackQuery):
+    await send_admin_menu(cb)
     await cb.answer()
 
-# 📅 Список слотов (только актуальные)
+# 📅 Список слотов
 @router.callback_query(F.data == "admin_slots_list", F.from_user.id.in_(ADMIN_IDS))
 async def admin_slots_list(cb: CallbackQuery):
     today = datetime.now().date().strftime("%Y-%m-%d")
     async with async_session() as s:
         res = await s.execute(select(Slot).where(Slot.date >= today).order_by(Slot.date, Slot.start_time))
-        slots = res.scalars().all()[:50]  # Ограничиваем 50 для стабильности
+        slots = res.scalars().all()[:50]
     if not slots:
         kb = InlineKeyboardBuilder().button(text="🔙 В меню", callback_data="admin_menu")
-        await cb.message.edit_text("📭 Нет будущих слотов.", reply_markup=kb.as_markup())
+        try: await cb.message.edit_text("📭 Нет будущих слотов.", reply_markup=kb.as_markup())
+        except: await cb.message.answer("📭 Нет будущих слотов.", reply_markup=kb.as_markup())
         await cb.answer()
         return
     kb = InlineKeyboardBuilder()
@@ -92,10 +93,11 @@ async def admin_slots_list(cb: CallbackQuery):
         kb.button(text=f"{icon} {fmt_date(sl.date)} | {sl.start_time}-{sl.end_time}", callback_data=f"slot_manage:{sl.id}")
     kb.adjust(1)
     kb.button(text="🔙 В меню", callback_data="admin_menu")
-    await cb.message.edit_text("📋 **Слоты (ближайшие 50):**", reply_markup=kb.as_markup())
+    try: await cb.message.edit_text("📋 **Слоты (ближайшие 50):**", reply_markup=kb.as_markup())
+    except: await cb.message.answer("📋 **Слоты (ближайшие 50):**", reply_markup=kb.as_markup())
     await cb.answer()
 
-# ➕ Создание слота (цена = 0)
+# ➕ Создание слотов на день (Шаг 1)
 @router.callback_query(F.data == "admin_add_slot", F.from_user.id.in_(ADMIN_IDS))
 async def add_slot_day_start(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_text("📅 **Создать слоты на целый день**\nВведите дату в формате `ДД.ММ`:", parse_mode="Markdown")
@@ -108,7 +110,8 @@ async def add_slot_day_date(m: Message, state: FSMContext):
         day, month = map(int, m.text.strip().split("."))
         year = datetime.now().year
         dt = datetime(year, month, day)
-        if dt.date() < datetime.now().date(): dt = dt.replace(year=year+1)
+        if dt.date() < datetime.now().date():
+            dt = dt.replace(year=year + 1)
         await state.update_data(slot_date=dt.strftime("%Y-%m-%d"))
         await m.answer("⏰ Введите время начала работы студии (например, `10:00`):")
         await state.set_state(AdminFSM.add_start)
@@ -143,7 +146,7 @@ async def add_slot_day_end_time(m: Message, state: FSMContext):
         slots_to_create = []
         current = start_dt
         while current < end_dt:
-            next_dt = current + timedelta(hours=1)  # 🔹 Интервал: 1 час (можно заменить на minutes=30)
+            next_dt = current + timedelta(hours=1)
             if next_dt > end_dt: break
             slots_to_create.append((current.strftime("%H:%M"), next_dt.strftime("%H:%M")))
             current = next_dt
@@ -154,7 +157,7 @@ async def add_slot_day_end_time(m: Message, state: FSMContext):
         async with async_session() as s:
             existing = await s.execute(select(Slot).where(Slot.date == date_str))
             if len(existing.scalars().all()) > 0:
-                return await m.answer(f"⚠️ На {date_str} уже есть слоты. Сначала удалите их или выберите другую дату.")
+                return await m.answer(f"⚠️ На {date_str} уже есть слоты. Удалите их или выберите другую дату.")
 
             for st, et in slots_to_create:
                 s.add(Slot(date=date_str, start_time=st, end_time=et, price=0.0, is_active=True, is_booked=False))
@@ -162,16 +165,18 @@ async def add_slot_day_end_time(m: Message, state: FSMContext):
 
         await m.answer(f"✅ Создано {len(slots_to_create)} слотов на {date_str}\n⏰ {start_str} – {end_time}\n💰 Цена: 0₽/час")
         await state.clear()
-        await admin_slots_list(m, FSMContext())
+        await admin_slots_list(m)
     except Exception as e:
         await m.answer(f"⚠️ Ошибка: {str(e)}")
-        
+
 # 🔧 Управление слотом
 @router.callback_query(F.data.startswith("slot_manage:"), F.from_user.id.in_(ADMIN_IDS))
 async def manage_slot(cb: CallbackQuery):
     sid = int(cb.data.split(":")[1])
-    async with async_session() as s: sl = await s.get(Slot, sid)
-    if not sl: return await cb.answer("❌ Слот не найден", show_alert=True)
+    async with async_session() as s:
+        sl = await s.get(Slot, sid)
+    if not sl:
+        return await cb.answer("❌ Слот не найден", show_alert=True)
     status = "✅ Активен" if sl.is_active else "❌ Отключен"
     booked = "🔒 Забронирован" if sl.is_booked else "⏳ Свободен"
     txt = f"📅 **Слот #{sl.id}**\n{fmt_date(sl.date)} | {sl.start_time}-{sl.end_time}\n{status} | {booked}\n💰 Цена: {int(sl.price)}₽"
@@ -179,7 +184,8 @@ async def manage_slot(cb: CallbackQuery):
         InlineKeyboardButton(text="🔄 " + ("Отключить" if sl.is_active else "Включить"), callback_data=f"slot_toggle:{sl.id}"),
         InlineKeyboardButton(text="🗑 Удалить", callback_data=f"slot_delete:{sl.id}")
     ).button(text="🔙 Назад", callback_data="admin_slots_list")
-    await cb.message.edit_text(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    try: await cb.message.edit_text(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    except: await cb.message.answer(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
     await cb.answer()
 
 @router.callback_query(F.data.startswith("slot_toggle:"), F.from_user.id.in_(ADMIN_IDS))
@@ -187,7 +193,9 @@ async def toggle_slot_active(cb: CallbackQuery):
     sid = int(cb.data.split(":")[1])
     async with async_session() as s:
         sl = await s.get(Slot, sid)
-        if sl: sl.is_active = not sl.is_active; await s.commit()
+        if sl:
+            sl.is_active = not sl.is_active
+            await s.commit()
     await manage_slot(cb)
 
 @router.callback_query(F.data.startswith("slot_delete:"), F.from_user.id.in_(ADMIN_IDS))
@@ -195,9 +203,13 @@ async def delete_slot(cb: CallbackQuery):
     sid = int(cb.data.split(":")[1])
     async with async_session() as s:
         sl = await s.get(Slot, sid)
-        if sl and not sl.is_booked: await s.delete(sl); await s.commit(); await cb.answer("🗑 Слот удалён")
-        else: await cb.answer("⛔ Нельзя удалить забронированный слот", show_alert=True)
-    await admin_slots_list(cb, FSMContext())
+        if sl and not sl.is_booked:
+            await s.delete(sl)
+            await s.commit()
+            await cb.answer("🗑 Слот удалён")
+        else:
+            await cb.answer("⛔ Нельзя удалить забронированный слот", show_alert=True)
+    await admin_slots_list(cb)
 
 # 📖 Список броней
 @router.callback_query(F.data == "admin_bookings_list", F.from_user.id.in_(ADMIN_IDS))
@@ -207,15 +219,18 @@ async def admin_bookings_list(cb: CallbackQuery):
         bookings = res.scalars().all()
     if not bookings:
         kb = InlineKeyboardBuilder().button(text="🔙 В меню", callback_data="admin_menu")
-        await cb.message.edit_text("📭 Броней нет.", reply_markup=kb.as_markup())
-        await cb.answer(); return
+        try: await cb.message.edit_text("📭 Броней нет.", reply_markup=kb.as_markup())
+        except: await cb.message.answer("📭 Броней нет.", reply_markup=kb.as_markup())
+        await cb.answer()
+        return
     kb = InlineKeyboardBuilder()
     for b in bookings:
         em = {"confirmed": "🟢", "confirmed_reminder": "🔵", "cancelled": "🔴"}.get(b.status, "⚪")
         kb.button(text=f"{em} #{b.id} | {int(b.total_price)}₽", callback_data=f"adm_booking:{b.id}")
     kb.adjust(1)
     kb.button(text="🔙 В меню", callback_data="admin_menu")
-    await cb.message.edit_text("📖 **Последние 30 броней:**", reply_markup=kb.as_markup())
+    try: await cb.message.edit_text("📖 **Последние 30 броней:**", reply_markup=kb.as_markup())
+    except: await cb.message.answer("📖 **Последние 30 броней:**", reply_markup=kb.as_markup())
     await cb.answer()
 
 # 🔍 Детали брони
@@ -225,7 +240,7 @@ async def adm_booking_detail(cb: CallbackQuery):
     async with async_session() as s:
         b = await s.get(Booking, bid)
         if not b: return await cb.answer("❌ Не найдена", show_alert=True)
-        user = await get_user(b.user_tg_id)
+        user = (await s.execute(select(User).where(User.tg_id == b.user_tg_id))).scalar_one_or_none()
         slot_ids = json.loads(b.slot_ids)
         res_sl = await s.execute(select(Slot).where(Slot.id.in_(slot_ids)))
         slots = res_sl.scalars().all()
@@ -241,7 +256,8 @@ async def adm_booking_detail(cb: CallbackQuery):
         kb.row(InlineKeyboardButton(text="✅ Подтв.", callback_data=f"adm_confirm:{b.id}"),
                InlineKeyboardButton(text="❌ Отмена", callback_data=f"adm_cancel:{b.id}"))
     kb.button(text="🔙 Назад", callback_data="admin_bookings_list")
-    await cb.message.edit_text(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    try: await cb.message.edit_text(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    except: await cb.message.answer(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
     await cb.answer()
 
 @router.callback_query(F.data.startswith("adm_confirm:"), F.from_user.id.in_(ADMIN_IDS))
@@ -249,8 +265,11 @@ async def adm_confirm(cb: CallbackQuery):
     bid = int(cb.data.split(":")[1])
     async with async_session() as s:
         b = await s.get(Booking, bid)
-        if b and b.status != "confirmed_reminder": b.status = "confirmed"; await s.commit()
-    await cb.answer("✅ Подтверждено"); await adm_booking_detail(cb)
+        if b and b.status != "confirmed_reminder":
+            b.status = "confirmed"
+            await s.commit()
+    await cb.answer("✅ Подтверждено")
+    await adm_booking_detail(cb)
 
 @router.callback_query(F.data.startswith("adm_cancel:"), F.from_user.id.in_(ADMIN_IDS))
 async def adm_cancel(cb: CallbackQuery):
@@ -263,7 +282,8 @@ async def adm_cancel(cb: CallbackQuery):
                 sl = await s.get(Slot, sid)
                 if sl: sl.is_booked = False
             await s.commit()
-    await cb.answer("❌ Отменено"); await adm_booking_detail(cb)
+    await cb.answer("❌ Отменено")
+    await adm_booking_detail(cb)
 
 # 🗓️ Брони по дате
 @router.callback_query(F.data == "admin_bookings_by_date", F.from_user.id.in_(ADMIN_IDS))
@@ -274,12 +294,16 @@ async def admin_bookings_by_date(cb: CallbackQuery):
         dates = [row[0] for row in res]
     if not dates:
         kb = InlineKeyboardBuilder().button(text="🔙 В меню", callback_data="admin_menu")
-        await cb.message.edit_text("📭 Нет броней на сегодня/будущее.", reply_markup=kb.as_markup())
-        await cb.answer(); return
+        try: await cb.message.edit_text("📭 Нет броней на сегодня/будущее.", reply_markup=kb.as_markup())
+        except: await cb.message.answer("📭 Нет броней на сегодня/будущее.", reply_markup=kb.as_markup())
+        await cb.answer()
+        return
     kb = InlineKeyboardBuilder()
     for d in dates: kb.button(text=fmt_date(d), callback_data=f"adm_bookings_date:{d}")
-    kb.adjust(1); kb.button(text="🔙 В меню", callback_data="admin_menu")
-    await cb.message.edit_text("🗓️ **Выберите дату:**", reply_markup=kb.as_markup())
+    kb.adjust(1)
+    kb.button(text="🔙 В меню", callback_data="admin_menu")
+    try: await cb.message.edit_text("🗓️ **Выберите дату:**", reply_markup=kb.as_markup())
+    except: await cb.message.answer("🗓️ **Выберите дату:**", reply_markup=kb.as_markup())
     await cb.answer()
 
 @router.callback_query(F.data.startswith("adm_bookings_date:"), F.from_user.id.in_(ADMIN_IDS))
@@ -288,14 +312,22 @@ async def show_date_bookings(cb: CallbackQuery):
     async with async_session() as s:
         res = await s.execute(select(Booking).order_by(Booking.created_at.desc()).limit(50))
         bookings = []
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         for b in res.scalars().all():
-            if any(datetime.strptime(date_str, "%Y-%m-%d").date() in [datetime.strptime(d, "%Y-%m-%d").date() for d in json.loads(b.slot_ids) for _ in [1]]):
+            sids = json.loads(b.slot_ids)
+            sl_res = await s.execute(select(Slot).where(Slot.id.in_(sids)))
+            sls = sl_res.scalars().all()
+            if any(sl.date == date_str for sl in sls):
                 bookings.append(b)
-    if not bookings: await cb.answer("Нет броней", show_alert=True); return
+    if not bookings:
+        await cb.answer("Нет броней", show_alert=True)
+        return
     kb = InlineKeyboardBuilder()
     for b in bookings: kb.button(text=f"🟢 #{b.id} | {int(b.total_price)}₽", callback_data=f"adm_booking:{b.id}")
-    kb.adjust(1); kb.button(text="⬅️ Назад к датам", callback_data="admin_bookings_by_date")
-    await cb.message.edit_text(f"📅 Брони на {fmt_date(date_str)}:", reply_markup=kb.as_markup())
+    kb.adjust(1)
+    kb.button(text="⬅️ Назад к датам", callback_data="admin_bookings_by_date")
+    try: await cb.message.edit_text(f"📅 Брони на {fmt_date(date_str)}:", reply_markup=kb.as_markup())
+    except: await cb.message.answer(f"📅 Брони на {fmt_date(date_str)}:", reply_markup=kb.as_markup())
     await cb.answer()
 
 # 💰 Редактор цен
@@ -311,7 +343,8 @@ async def show_prices(cb: CallbackQuery):
         InlineKeyboardButton(text="✏️ 3 кам.", callback_data="set_cam3"),
         InlineKeyboardButton(text="✏️ Монтаж", callback_data="set_editing")
     ).row(InlineKeyboardButton(text="🔙 В меню", callback_data="admin_menu"))
-    await cb.message.edit_text(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    try: await cb.message.edit_text(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
+    except: await cb.message.answer(txt, reply_markup=kb.as_markup(), parse_mode="Markdown")
     await cb.answer()
 
 @router.callback_query(F.data.startswith("set_"), F.from_user.id.in_(ADMIN_IDS))
@@ -327,10 +360,12 @@ async def ask_price(cb: CallbackQuery, state: FSMContext):
 async def save_price(m: Message, state: FSMContext):
     if not m.text.isdigit(): return await m.answer("⚠️ Только цифры.")
     data = await state.get_data()
-    p = load_prices(); p[data["price_key"]] = int(m.text)
-    save_prices(p); await state.clear()
+    p = load_prices()
+    p[data["price_key"]] = int(m.text)
+    save_prices(p)
+    await state.clear()
     await m.answer(f"✅ Цена сохранена: {int(m.text)}₽")
-    await admin_menu(m, FSMContext())
+    await send_admin_menu(m)
 
 # 🔍 Поиск по телефону
 @router.callback_query(F.data == "adm_search_phone", F.from_user.id.in_(ADMIN_IDS))
@@ -345,7 +380,10 @@ async def search_phone_exec(m: Message, state: FSMContext):
     async with async_session() as s:
         res = await s.execute(select(User).where(User.phone == phone))
         user = res.scalar_one_or_none()
-    if not user: await m.answer("❌ Пользователь не найден."); await state.clear(); return
+    if not user:
+        await m.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
     async with async_session() as s:
         res_b = await s.execute(select(Booking).where(Booking.user_tg_id == user.tg_id).order_by(Booking.created_at.desc()).limit(10))
         bookings = res_b.scalars().all()
@@ -378,3 +416,4 @@ async def broadcast_exec(m: Message, state: FSMContext):
         except: pass
     await m.answer(f"✅ Рассылка завершена. Доставлено: {sent}/{len(targets)}")
     await state.clear()
+    await send_admin_menu(m)
