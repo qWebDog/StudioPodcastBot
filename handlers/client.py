@@ -28,7 +28,9 @@ class BookFSM(StatesGroup):
 # 🔄 Универсальный апдейтер одного сообщения
 async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboardMarkup = None, parse_mode="Markdown"):
     bot = event.bot
-    chat_id = event.chat.id
+    # ✅ Безопасно извлекаем chat_id (работает и для Message, и для CallbackQuery)
+    chat_id = event.message.chat.id if hasattr(event, 'message') else event.chat.id
+    
     data = await state.get_data()
     msg_id = data.get("booking_msg_id")
 
@@ -37,11 +39,11 @@ async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboa
             await bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=text, reply_markup=kb, parse_mode=parse_mode)
             return
         except Exception:
-            pass  # Если редактирование недоступно, переходим к fallback
+            pass  # Если редактирование недоступно (старое сообщение, права и т.д.), идём в fallback
 
     new_msg = await event.message.answer(text, reply_markup=kb, parse_mode=parse_mode)
     await state.update_data(booking_msg_id=new_msg.message_id)
-
+    
 # 🔄 Единый переключатель главного меню
 async def switch_view(cb: CallbackQuery, view: str):
     text = ""
