@@ -416,57 +416,6 @@ async def add_slot_start(cb: CallbackQuery, state: FSMContext):
     await cb.message.edit_text("📅 **Создать слоты на целый день**\nВведите дату в формате `ДД.ММ`:", parse_mode="Markdown")
     await state.set_state(AdminFSM.add_date); await cb.answer()
 
-@router.message(AdminFSM.add_date, F.from_user.id.in_(ADMIN_IDS))
-async def add_slot_date(m: Message, state: FSMContext):
-    try:
-        d, mo = map(int, m.text.strip().split("."))
-        y = datetime.now().year
-        dt = datetime(y, mo, d)
-        if dt.date() < datetime.now().date(): dt = dt.replace(year=y+1)
-        await state.update_data(slot_date=dt.strftime("%Y-%m-%d"))
-        await m.answer("⏰ Время начала (напр. `10:00`):")
-        await state.set_state(AdminFSM.add_start)
-    except: await m.answer("⚠️ Формат: `25.12`")
-
-@router.message(AdminFSM.add_start, F.from_user.id.in_(ADMIN_IDS))
-async def add_slot_start_time(m: Message, state: FSMContext):
-    try:
-        h, mi = map(int, m.text.strip().split(":"))
-        if not (0 <= h <= 23 and 0 <= mi <= 59): raise ValueError
-        await state.update_data(slot_start=f"{h:02d}:{mi:02d}")
-        await m.answer("⏰ Время окончания (напр. `22:00`):")
-        await state.set_state(AdminFSM.add_end)
-    except: await m.answer("⚠️ Формат: `22:00`")
-
-@router.message(AdminFSM.add_end, F.from_user.id.in_(ADMIN_IDS))
-async def add_slot_end_time(m: Message, state: FSMContext):
-    try:
-        he, me = map(int, m.text.strip().split(":"))
-        if not (0 <= he <= 23 and 0 <= me <= 59): raise ValueError
-        data = await state.get_data()
-        s_dt = datetime.strptime(data["slot_start"], "%H:%M")
-        e_dt = datetime.strptime(f"{he:02d}:{me:02d}", "%H:%M")
-        
-        slots = []
-        cur = s_dt
-        while cur < e_dt:
-            nxt = cur + timedelta(hours=1)
-            if nxt > e_dt: break
-            slots.append((cur.strftime("%H:%M"), nxt.strftime("%H:%M"))); cur = nxt
-            
-        if not slots: return await m.answer("❌ Разница должна быть ≥ 1 часа.")
-        
-        async with async_session() as s:
-            if (await s.execute(select(Slot).where(Slot.date == data["slot_date"]))).first():
-                return await m.answer("⚠️ Слоты на эту дату уже есть.")
-            for st, et in slots:
-                s.add(Slot(date=data["slot_date"], start_time=st, end_time=et, price=0.0, is_active=True, is_booked=False))
-            await s.commit()
-        await m.answer(f"✅ Создано {len(slots)} слотов на {data['slot_date']}\n⏰ {data['slot_start']} – {he:02d}:{me:02d} | 💰 0₽")
-        await state.clear()
-        await _show_slots(m)
-    except Exception as e: await m.answer(f"⚠️ Ошибка: {e}")
-
 # 🔧 Управление слотом
 async def _manage_slot(event, sid: int):
     async with async_session() as s: sl = await s.get(Slot, sid)
