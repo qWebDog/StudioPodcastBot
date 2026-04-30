@@ -244,7 +244,7 @@ async def slot_delete_cb(cb: CallbackQuery):
     await _show_slots(cb); await cb.answer()
 
 # 📖 Список броней
-sync def _show_bookings(event):
+async def _show_bookings(event):
     async with async_session() as s:
         res = await s.execute(select(Booking).order_by(Booking.created_at.desc()).limit(30))
         bks = res.scalars().all()
