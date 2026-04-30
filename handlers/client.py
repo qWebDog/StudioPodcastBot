@@ -365,25 +365,38 @@ async def _create_booking(event, state: FSMContext):
             slots.append(sl)
             sl.is_booked = True
 
-        # 🔥 Автоудаление следующего слота (буфер) с сохранением данных для восстановления
         if slots:
-            max_end_time = max(sl.end_time for sl in slots)
-            next_slot = (await s.execute(select(Slot).where(
+            # 1. Находим самое позднее время окончания среди всех выбранных слотов
+            latest_end = max(sl.end_time for sl in slots)
+
+            # 2. Ищем слот, начинающийся ровно в это время (с защитой от пробелов/форматов)
+            next_slot_query = select(Slot).where(
                 Slot.date == data["date"],
-                Slot.start_time == max_end_time,
-                ~Slot.is_booked,
-                Slot.is_active
-            ))).scalar_one_or_none()
+                Slot.is_active == True,
+                Slot.is_booked == False
+            )
+            all_next = (await s.execute(next_slot_query)).scalars().all()
+            
+            buffer_slot = None
+            for sl in all_next:
+                # Нормализация для точного сравнения "HH:MM" == "HH:MM"
+                start_str = str(sl.start_time).replace(" ", "")[:5]
+                end_str = str(latest_end).replace(" ", "")[:5]
+                if start_str == end_str:
+                    buffer_slot = sl
+                    break
 
-            if next_slot:
+            # 3. Удаляем буферный слот и сохраняем его для восстановления при отмене
+            if buffer_slot:
                 deleted_buffer = {
-                    "date": next_slot.date,
-                    "start": next_slot.start_time,
-                    "end": next_slot.end_time,
-                    "price": float(next_slot.price)
+                    "date": buffer_slot.date,
+                    "start": buffer_slot.start_time,
+                    "end": buffer_slot.end_time,
+                    "price": float(buffer_slot.price)
                 }
-                await s.delete(next_slot)
+                await s.delete(buffer_slot)
 
+        # Сохраняем данные о удалённом слоте в JSON брони
         services_data = {"camera": data["camera_type"]}
         if deleted_buffer:
             services_data["buffer_deleted"] = deleted_buffer
