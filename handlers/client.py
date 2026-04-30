@@ -354,7 +354,7 @@ async def save_phone(m: Message, state: FSMContext):
 
 async def _create_booking(event, state: FSMContext):
     data = await state.get_data()
-    deleted_buffer = None
+    deleted_buffers = []
 
     async with async_session() as s:
         slots = []
@@ -365,41 +365,31 @@ async def _create_booking(event, state: FSMContext):
             slots.append(sl)
             sl.is_booked = True
 
-        if slots:
-            # 1. Находим самое позднее время окончания среди всех выбранных слотов
-            latest_end = max(sl.end_time for sl in slots)
+        # 🔍 Собираем уникальные времена окончания выбранных слотов
+        end_times = set(str(sl.end_time).strip()[:5] for sl in slots)
 
-            # 2. Ищем слот, начинающийся ровно в это время (с защитой от пробелов/форматов)
-            next_slot_query = select(Slot).where(
-                Slot.date == data["date"],
-                Slot.is_active == True,
-                Slot.is_booked == False
-            )
-            all_next = (await s.execute(next_slot_query)).scalars().all()
-            
-            buffer_slot = None
-            for sl in all_next:
-                # Нормализация для точного сравнения "HH:MM" == "HH:MM"
-                start_str = str(sl.start_time).replace(" ", "")[:5]
-                end_str = str(latest_end).replace(" ", "")[:5]
-                if start_str == end_str:
-                    buffer_slot = sl
-                    break
+        # Загружаем все свободные слоты на эту дату
+        free_slots = (await s.execute(select(Slot).where(
+            Slot.date == data["date"],
+            Slot.is_active == True,
+            Slot.is_booked == False
+        ))).scalars().all()
 
-            # 3. Удаляем буферный слот и сохраняем его для восстановления при отмене
-            if buffer_slot:
-                deleted_buffer = {
-                    "date": buffer_slot.date,
-                    "start": buffer_slot.start_time,
-                    "end": buffer_slot.end_time,
-                    "price": float(buffer_slot.price)
-                }
-                await s.delete(buffer_slot)
+        # Удаляем слоты, которые начинаются ровно в время окончания любого booked-слота
+        for fs in free_slots:
+            start_norm = str(fs.start_time).strip()[:5]
+            if start_norm in end_times:
+                deleted_buffers.append({
+                    "date": fs.date,
+                    "start": fs.start_time,
+                    "end": fs.end_time,
+                    "price": float(fs.price)
+                })
+                await s.delete(fs)
 
-        # Сохраняем данные о удалённом слоте в JSON брони
         services_data = {"camera": data["camera_type"]}
-        if deleted_buffer:
-            services_data["buffer_deleted"] = deleted_buffer
+        if deleted_buffers:
+            services_data["buffer_deleted"] = deleted_buffers
 
         b = Booking(
             user_tg_id=event.from_user.id,
@@ -414,7 +404,7 @@ async def _create_booking(event, state: FSMContext):
     await _notify_new_booking(event.bot, b.id, data, times, data["total_price"])
     await edit_booking_msg(event, state, f"✅ Бронь #{b.id} создана! Сумма: {int(data['total_price'])}₽. Ждём вас.")
     await state.clear()
-
+    
 @router.callback_query(F.data == "book_cancel")
 async def cancel_booking(cb: CallbackQuery, state: FSMContext): await state.clear(); await switch_view(cb, "main"); await cb.answer()
 
@@ -424,33 +414,35 @@ async def my_cancel(cb: CallbackQuery):
     bid = int(cb.data.split(":")[1])
     async with async_session() as s:
         b = await s.get(Booking, bid)
-        if not b or b.user_tg_id != cb.from_user.id or b.status != "confirmed": 
+        if not b or b.user_tg_id != cb.from_user.id or b.status != "confirmed":
             return await cb.answer("⛔ Нельзя отменить", show_alert=True)
         b.status = "cancelled"
-        
+
         for sid in json.loads(b.slot_ids):
             sl = await s.get(Slot, sid)
             if sl: sl.is_booked = False
-        
-        # 🔄 Восстановление удалённого буферного слота
+
+        # 🔄 Восстановление всех удалённых буферных слотов
         svc = json.loads(b.services) if b.services else {}
-        buffer = svc.get("buffer_deleted")
-        if buffer:
+        buffers = svc.get("buffer_deleted", [])
+        if not isinstance(buffers, list): buffers = [buffers]  # Совместимость со старыми бронями
+
+        for buf in buffers:
             s.add(Slot(
-                date=buffer["date"],
-                start_time=buffer["start"],
-                end_time=buffer["end"],
-                price=buffer["price"],
+                date=buf["date"],
+                start_time=buf["start"],
+                end_time=buf["end"],
+                price=buf["price"],
                 is_active=True,
                 is_booked=False
             ))
-            
+
         await s.commit()
-        
+
     await cb.answer("✅ Отменено")
     await switch_view(cb, "bookings")
     await _notify_admins(cb.bot, b, "cancelled")
-
+    
 # 🔔 Напоминания
 @router.callback_query(F.data.startswith("rem_confirm:") | F.data.startswith("rem_cancel:"))
 async def handle_reminder(cb: CallbackQuery):
