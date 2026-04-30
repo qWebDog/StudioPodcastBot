@@ -458,7 +458,7 @@ async def cancel_booking_confirm(cb: CallbackQuery):
     except: await cb.message.answer("✅ Бронь отменена.", reply_markup=kb)
 
 # 📢 УВЕДОМЛЕНИЯ
-async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
+async def _notify_new_booking(bot, booking_id: int, data: dict, times_str: list, total_price: float):
     def merge_slots(times):
         if not times: return []
         slots = sorted([t.split("-") for t in times], key=lambda x: x[0])
@@ -471,9 +471,18 @@ async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, tota
         h = "час" if count == 1 else "часа" if 2 <= count <= 4 else "часов"
         merged.append(f"{curr_start}-{curr_end} ({count} {h})")
         return merged
+
     time_lines = merge_slots(times_str)
     cam = "Без камер" if data.get("camera_type") == "0" else f"{data.get('camera_type')} кам."
-    msg = f"🆕 **Бронь #{booking_id}**\n👤 {data['client_name']}\n📞 `{data['phone']}`\n📅 {format_date_display(data['date'])}\n⏰ " + "\n⏰ ".join(time_lines) + f"\n📹 {cam}\n💰 {int(total_price)}₽"
+    msg = (
+        f"🆕 **Бронь #{booking_id}**\n"
+        f"👤 {data['client_name']}\n"
+        f"📞 `{data['phone']}`\n"
+        f"📅 {format_date_display(data['date'])}\n"
+        f"⏰ " + "\n⏰ ".join(time_lines) + "\n"
+        f"📹 {cam}\n"
+        f"💰 {int(total_price)}₽"
+    )
     for aid in ADMIN_IDS:
         try: await bot.send_message(aid, msg, parse_mode="Markdown")
         except Exception as e: logger.error(f"Notify fail {aid}: {e}")
