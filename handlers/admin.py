@@ -16,6 +16,19 @@ router = Router()
 logger = logging.getLogger(__name__)
 PRICES_FILE = os.path.join(os.getcwd(), "prices.json")
 
+# 💰 Утилиты для работы с ценами
+def load_prices():
+    defaults = {"rental": 0, "cam1": 3000, "cam2": 3500, "cam3": 4000, "no_cam": 0}
+    try:
+        with open(PRICES_FILE, "r") as f:
+            return {**defaults, **json.load(f)}
+    except:
+        return defaults
+
+def save_prices(prices: dict):
+    with open(PRICES_FILE, "w") as f:
+        json.dump(prices, f)
+
 class AdminFSM(StatesGroup):
     add_date = State()
     add_start = State()
