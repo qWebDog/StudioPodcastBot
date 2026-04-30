@@ -549,7 +549,7 @@ async def handle_reminder(cb: CallbackQuery):
     await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
 
 # 📢 Уведомления
-async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
+async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, total_price: float):
     msg = (
         f"🆕 **Новая бронь #{booking_id}**\n"
         f"👤 {data['client_name']} | 📞 `{data['phone']}`\n"
