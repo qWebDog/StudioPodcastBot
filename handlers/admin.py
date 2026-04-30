@@ -12,6 +12,21 @@ from sqlalchemy import select
 from database import async_session, Slot, Booking, User, get_user
 from config import ADMIN_IDS
 
+
+router = Router()
+logger = logging.getLogger(__name__)
+PRICES_FILE = os.path.join(os.getcwd(), "prices.json")
+
+# 🔄 Состояния админки
+class AdminFSM(StatesGroup):
+    waiting_date = State()
+    waiting_start_time = State()
+    waiting_end_time = State()
+    waiting_price_key = State()
+    waiting_broadcast = State()
+    waiting_phone_search = State()
+
+# 🛠 Команда /admin
 @router.message(F.text == "/admin", F.from_user.id.in_(ADMIN_IDS))
 async def cmd_admin(m: Message):
     kb = InlineKeyboardBuilder().row(
@@ -26,19 +41,6 @@ async def cmd_admin(m: Message):
     ).row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
     kb.adjust(2)
     await m.answer("🛠️ **Панель администратора:**", reply_markup=kb.as_markup(), parse_mode="Markdown")
-
-router = Router()
-logger = logging.getLogger(__name__)
-PRICES_FILE = os.path.join(os.getcwd(), "prices.json")
-
-# 🔄 Состояния админки
-class AdminFSM(StatesGroup):
-    waiting_date = State()
-    waiting_start_time = State()
-    waiting_end_time = State()
-    waiting_price_key = State()
-    waiting_broadcast = State()
-    waiting_phone_search = State()
 
 # 💰 Работа с ценами
 def load_prices():
