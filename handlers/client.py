@@ -24,18 +24,15 @@ class BookFSM(StatesGroup):
     date = State()
     slots = State()
     camera = State()
-    editing = State()
     name = State()
     phone = State()
 
+# 💰 Загрузка цен
 def get_prices():
     defaults = {"rental": 2000, "cam1": 3000, "cam2": 3500, "cam3": 4000, "editing": 5000}
     try:
-        with open(PRICES_FILE, "r") as f:
-            saved = json.load(f)
-            return {**defaults, **saved}
-    except FileNotFoundError:
-        return defaults
+        with open(PRICES_FILE, "r") as f: return {**defaults, **json.load(f)}
+    except: return defaults
 
 # 🔄 Универсальный апдейтер одного сообщения
 async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboardMarkup = None, parse_mode: str = "Markdown"):
@@ -64,8 +61,9 @@ async def edit_booking_msg(event, state: FSMContext, text: str, kb: InlineKeyboa
 async def switch_view(cb: CallbackQuery, view: str):
     text = ""
     kb = back_to_menu_kb()
+
     if view == "main":
-        text = "🎙️ Добро пожаловать в студию подкастов! Выберите действие:"
+        text = "🎙️ Добро пожаловать в студию подкастов! Выберите нужное действие:"
         kb = client_main_kb()
     elif view == "contact":
         text = "📞 **Связь с админом:**\n👤 TG: `@ваш_ник`\n📱 Тел: `+79990000000`\n🕒 10:00–22:00"
@@ -105,13 +103,13 @@ async def go_main(cb: CallbackQuery, state: FSMContext): await state.clear(); aw
 @router.callback_query(F.data == "view_price")
 async def go_price(cb: CallbackQuery):
     p = get_prices()
-    await cb.answer(f"ПРАЙС\n\n🎙️ Аренда — {p['rental']}₽/час\n\n📹 1 камера — {p['cam1']}₽/час\n   2 камеры — {p['cam2']}₽/час\n   3 камеры — {p['cam3']}₽/час\n\n🎬 Монтаж — {p['editing']}₽", show_alert=True)
+    await cb.answer(f"ПРАЙС\n\n🎙️ Аренда — {p['rental']}₽/час\n\n📹 1 камера — {p['cam1']}₽\n   2 камеры — {p['cam2']}₽\n   3 камеры — {p['cam3']}₽\n\n🏢 Студия без камер — 0₽", show_alert=True)
 @router.callback_query(F.data == "view_contact")
 async def go_contact(cb: CallbackQuery): await switch_view(cb, "contact"); await cb.answer()
 @router.callback_query(F.data == "view_bookings")
 async def go_bookings(cb: CallbackQuery): await switch_view(cb, "bookings"); await cb.answer()
 
-# 📅 ШАГ 1/7: Месяцы
+# 📅 ШАГ 1/6: Месяцы
 @router.callback_query(F.data == "book_start")
 async def start_booking(cb: CallbackQuery, state: FSMContext):
     await _show_months(cb, state, is_callback=True); await cb.answer()
@@ -133,7 +131,7 @@ async def _show_months(event, state: FSMContext, is_callback: bool = False):
         year, month = ym.split("-")
         kb.button(text=f"{MONTH_NAMES[month]} {year}", callback_data=f"book_month:{ym}")
     kb.adjust(1); kb.row(InlineKeyboardButton(text="⬅️ Меню", callback_data="view_main"))
-    await edit_booking_msg(event, state, "📅 **Шаг 1/7:** Выберите месяц:", kb.as_markup())
+    await edit_booking_msg(event, state, "📅 **Шаг 1/6:** Выберите месяц:", kb.as_markup())
 
 @router.callback_query(F.data.startswith("book_month:"))
 async def select_month(cb: CallbackQuery, state: FSMContext):
@@ -149,12 +147,12 @@ async def _show_dates(cb, state):
     kb = InlineKeyboardBuilder()
     for d in dates: kb.button(text=format_date_display(d), callback_data=f"book_date:{d}")
     kb.button(text="⬅️ Назад", callback_data="back_to_months"); kb.adjust(1)
-    await edit_booking_msg(cb, state, "📆 **Шаг 2/7:** Выберите дату:", kb.as_markup())
+    await edit_booking_msg(cb, state, "📆 **Шаг 2/6:** Выберите дату:", kb.as_markup())
 
 @router.callback_query(F.data == "back_to_months")
 async def back_to_months(cb: CallbackQuery, state: FSMContext): await _show_months(cb, state, is_callback=True); await cb.answer()
 
-# ⏰ ШАГ 3/7: Время
+# ⏰ ШАГ 3/6: Время
 @router.callback_query(F.data.startswith("book_date:"))
 async def select_date(cb: CallbackQuery, state: FSMContext):
     date_iso = cb.data.split(":")[1]; await state.update_data(date=date_iso)
@@ -175,7 +173,7 @@ async def select_date(cb: CallbackQuery, state: FSMContext):
     for sl in slots: kb.button(text=f"⏳ {sl.start_time}-{sl.end_time}", callback_data=f"slot_toggle:{sl.id}")
     kb.button(text="📝 Далее", callback_data="slots_done"); kb.adjust(2)
     kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_date"))
-    await edit_booking_msg(cb, state, f"⏰ **Шаг 3/7:** Выберите время:", kb.as_markup()); await cb.answer()
+    await edit_booking_msg(cb, state, "⏰ **Шаг 3/6:** Выберите время:\n💡 *Нажмите на выбранный час, чтобы убрать его*", kb.as_markup()); await cb.answer()
 
 @router.callback_query(F.data == "back_to_date")
 async def back_to_date(cb: CallbackQuery, state: FSMContext):
@@ -187,7 +185,7 @@ async def back_to_date(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("slot_toggle:"))
 async def toggle_slot(cb: CallbackQuery, state: FSMContext):
     sid = int(cb.data.split(":")[1]); data = await state.get_data(); sel = data.get("selected_slots", [])
-    if sid in sel: sel.remove(sid)
+    if sid in sel: sel.remove(sid)  # 🔥 Удаление часа из брони
     else: sel.append(sid)
     await state.update_data(selected_slots=sel)
     now, threshold = datetime.now(STUDIO_TZ), datetime.now(STUDIO_TZ) + timedelta(hours=1, minutes=30)
@@ -207,7 +205,7 @@ async def toggle_slot(cb: CallbackQuery, state: FSMContext):
     except: await edit_booking_msg(cb, state, cb.message.text, kb.as_markup())
     await cb.answer()
 
-# 📹 ШАГ 4/7: Камеры
+# 📹 ШАГ 4/6: Камеры / Без камер
 @router.callback_query(F.data == "slots_done")
 async def finish_slots(cb: CallbackQuery, state: FSMContext):
     if not (await state.get_data()).get("selected_slots"): return await cb.answer("⚠️ Выберите час!", show_alert=True)
@@ -216,17 +214,14 @@ async def finish_slots(cb: CallbackQuery, state: FSMContext):
         InlineKeyboardButton(text="📹 1 камера", callback_data="camera:1"),
         InlineKeyboardButton(text="📹 2 камеры", callback_data="camera:2"),
         InlineKeyboardButton(text="📹 3 камеры", callback_data="camera:3")
+    ).row(
+        InlineKeyboardButton(text="🏢 Студия без камер", callback_data="camera:0")
     ).row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_date"))
-    await edit_booking_msg(cb, state, "📹 **Шаг 4/7:** Выберите камеры:", kb.as_markup()); await cb.answer()
+    await edit_booking_msg(cb, state, "📹 **Шаг 4/6:** Выберите оборудование:", kb.as_markup()); await cb.answer()
 
 @router.callback_query(F.data.startswith("camera:"))
 async def select_camera(cb: CallbackQuery, state: FSMContext):
-    await state.update_data(camera_type=cb.data.split(":")[1]); await state.set_state(BookFSM.editing)
-    kb = InlineKeyboardBuilder().row(
-        InlineKeyboardButton(text="✅ Да, нужен", callback_data="edit:yes"),
-        InlineKeyboardButton(text="❌ Нет", callback_data="edit:no")
-    ).row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_camera"))
-    await edit_booking_msg(cb, state, "🎬 **Шаг 5/7:** Монтаж? (+цена)", kb.as_markup()); await cb.answer()
+    await state.update_data(camera_type=cb.data.split(":")[1]); await _show_summary(cb, state)
 
 @router.callback_query(F.data == "back_to_camera")
 async def back_to_camera(cb: CallbackQuery, state: FSMContext):
@@ -235,45 +230,37 @@ async def back_to_camera(cb: CallbackQuery, state: FSMContext):
         InlineKeyboardButton(text="📹 1 камера", callback_data="camera:1"),
         InlineKeyboardButton(text="📹 2 камеры", callback_data="camera:2"),
         InlineKeyboardButton(text="📹 3 камеры", callback_data="camera:3")
+    ).row(
+        InlineKeyboardButton(text="🏢 Студия без камер", callback_data="camera:0")
     ).row(InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_date"))
-    await edit_booking_msg(cb, state, "📹 Выберите камеры:", kb.as_markup()); await cb.answer()
+    await edit_booking_msg(cb, state, "📹 Выберите оборудование:", kb.as_markup()); await cb.answer()
 
-# 🎬 ШАГ 5/7: Монтаж → ИТОГ
-@router.callback_query(F.data.startswith("edit:"))
-async def select_editing(cb: CallbackQuery, state: FSMContext):
-    await state.update_data(editing=cb.data.split(":")[1]); await _show_summary(cb, state)
-
-@router.callback_query(F.data == "back_to_editing")
-async def back_to_editing(cb: CallbackQuery, state: FSMContext): await select_camera(cb, state)
-
+# 📋 ИТОГ
 async def _show_summary(cb, state):
     data = await state.get_data(); p = get_prices()
     hours = len(data.get("selected_slots", []))
     rental = hours * p["rental"]
-    cam_price = p[f"cam{data['camera_type']}"]
-    edit_price = p["editing"] if data["editing"] == "yes" else 0
-    total = rental + cam_price + edit_price
+    cam_price = p.get(f"cam{data['camera_type']}", 0)
+    total = rental + cam_price
     await state.update_data(total_price=total)
-    txt = f"📋 **Итог:**\n📅 {format_date_display(data['date'])} ⏰ {hours} ч\n📹 {data['camera_type']} кам. 🎬 {'Да' if data['editing']=='yes' else 'Нет'}\n💵 **Всего: {total}₽**"
+    cam_label = "Без камер" if data["camera_type"] == "0" else f"{data['camera_type']} кам."
+    txt = f"📋 **Итог:**\n📅 {format_date_display(data['date'])} ⏰ {hours} ч\n📹 {cam_label}\n💵 **Всего: {total}₽**"
     kb = InlineKeyboardBuilder().button(text="✅ Подтвердить", callback_data="book_confirm")
-    kb.row(InlineKeyboardButton(text="⬅️ Изменить монтаж", callback_data="back_to_editing"), InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel"))
+    kb.row(InlineKeyboardButton(text="⬅️ Изменить камеры", callback_data="back_to_camera"), InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel"))
     await edit_booking_msg(cb, state, txt, kb.as_markup()); await cb.answer()
 
-# 👤 ШАГ 6/7: Имя
+# 👤 ШАГ 5/6: Имя
 @router.callback_query(F.data == "book_confirm")
 async def ask_name(cb: CallbackQuery, state: FSMContext):
     await state.set_state(BookFSM.name)
-    
     user = await get_user(cb.from_user.id)
     saved_name = user.client_name if user else "-"
-    
-    txt = f"👤 **Шаг 6/7:** Ваше имя:\n(Сохранено: `{saved_name}`)"
+    txt = f"👤 **Шаг 5/6:** Ваше имя:\n(Сохранено: `{saved_name}`)"
     kb = InlineKeyboardBuilder().row(
         InlineKeyboardButton(text="⬅️ Назад к итогу", callback_data="book_summary_back"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
     )
-    await edit_booking_msg(cb, state, txt, kb.as_markup())
-    await cb.answer()
+    await edit_booking_msg(cb, state, txt, kb.as_markup()); await cb.answer()
 
 @router.message(BookFSM.name)
 async def save_name(m: Message, state: FSMContext):
@@ -290,9 +277,9 @@ async def save_name(m: Message, state: FSMContext):
         InlineKeyboardButton(text="⬅️ Назад к имени", callback_data="book_name_back"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="book_cancel")
     )
-    await edit_booking_msg(m, state, "📞 **Шаг 7/7:** Телефон (формат `+79991111111`):", kb.as_markup())
+    await edit_booking_msg(m, state, "📞 **Шаг 6/6:** Телефон (формат `+79991111111`):", kb.as_markup())
 
-# 📱 ШАГ 7/7: Телефон → Финал
+# 📱 ШАГ 6/6: Телефон → Финал
 @router.callback_query(F.data == "book_name_back")
 async def back_to_name(cb: CallbackQuery, state: FSMContext): await state.set_state(BookFSM.name); await ask_name(cb, state)
 @router.callback_query(F.data == "book_summary_back")
@@ -317,13 +304,36 @@ async def _create_booking(event, state: FSMContext):
         for sid in data["selected_slots"]:
             sl = await s.get(Slot, sid)
             if not sl or sl.is_booked or not sl.is_active: 
-                return await edit_booking_msg(event, state, f"❌ Слот занят. Начните заново.")
-            slots.append(sl); sl.is_booked = True
-        b = Booking(user_tg_id=event.from_user.id, slot_ids=json.dumps(data["selected_slots"]), services=json.dumps({"camera": data["camera_type"], "editing": data["editing"]}), total_price=data["total_price"])
-        s.add(b); await s.commit()
+                return await edit_booking_msg(event, state, "❌ Слот занят. Начните заново.")
+            slots.append(sl)
+            sl.is_booked = True
+
+        # 🔥 АВТОУДАЛЕНИЕ СЛЕДУЮЩЕГО СЛОТА (буфер между клиентами)
+        if slots:
+            max_end_time = max(sl.end_time for sl in slots)
+            next_slot = (await s.execute(select(Slot).where(
+                Slot.date == data["date"],
+                Slot.start_time == max_end_time,
+                ~Slot.is_booked,
+                Slot.is_active
+            ))).scalar_one_or_none()
+
+            if next_slot:
+                await s.delete(next_slot)
+
+        b = Booking(
+            user_tg_id=event.from_user.id,
+            slot_ids=json.dumps(data["selected_slots"]),
+            services=json.dumps({"camera": data["camera_type"]}),
+            total_price=data["total_price"]
+        )
+        s.add(b)
+        await s.commit()
+
     times = [f"{sl.start_time}-{sl.end_time}" for sl in slots]
     await _notify_new_booking(event.bot, b.id, data, times, data["total_price"])
-    await edit_booking_msg(event, state, f"✅ Бронь #{b.id} создана! Сумма: {int(data['total_price'])}₽. Ждём вас."); await state.clear()
+    await edit_booking_msg(event, state, f"✅ Бронь #{b.id} создана! Сумма: {int(data['total_price'])}₽. Ждём вас.")
+    await state.clear()
 
 @router.callback_query(F.data == "book_cancel")
 async def cancel_booking(cb: CallbackQuery, state: FSMContext): await state.clear(); await switch_view(cb, "main"); await cb.answer()
@@ -360,9 +370,10 @@ async def handle_reminder(cb: CallbackQuery):
     except: pass
     await cb.answer(); await _notify_admins(cb.bot, b, "confirmed" if action == "rem_confirm" else "cancelled")
 
-# 📢 Уведомления (✅ ИСПРАВЛЕНО)
-async def _notify_new_booking(bot, booking_id: int,  data, times_str: list, total_price: float):
-    msg = f"🆕 **Бронь #{booking_id}**\n👤 {data['client_name']} | 📞 `{data['phone']}`\n📅 {format_date_display(data['date'])} ⏰ {', '.join(times_str)}\n📹 {data['camera_type']} кам. 🎬 {'Да' if data['editing']=='yes' else 'Нет'}\n💰 {int(total_price)}₽"
+# 📢 Уведомления (✅ ИСПРАВЛЕНО: параметр data: dict)
+async def _notify_new_booking(bot, booking_id: int,  dict, times_str: list, total_price: float):
+    cam = "Без камер" if data.get("camera_type") == "0" else f"{data.get('camera_type')} кам."
+    msg = f"🆕 **Бронь #{booking_id}**\n👤 {data['client_name']} | 📞 `{data['phone']}`\n📅 {format_date_display(data['date'])} ⏰ {', '.join(times_str)}\n📹 {cam}\n💰 {int(total_price)}₽"
     for aid in ADMIN_IDS:
         try: await bot.send_message(aid, msg, parse_mode="Markdown")
         except Exception as e: logger.error(f"Notify fail {aid}: {e}")
