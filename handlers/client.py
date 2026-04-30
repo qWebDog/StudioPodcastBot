@@ -360,7 +360,7 @@ async def cancel_booking(cb: CallbackQuery, state: FSMContext): await state.clea
 async def view_bookings_months(cb: CallbackQuery):
     active = await _get_active_bookings(cb.from_user.id)
     if not active:
-        kb = InlineKeyboardBuilder().button(text="⬅️ В меню", callback_data="view_main")
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="⬅️ В меню", callback_data="view_main"))
         try: await cb.message.edit_text("📭 У вас нет активных записей.", reply_markup=kb.as_markup())
         except: await cb.message.answer("📭 У вас нет активных записей.", reply_markup=kb.as_markup())
         return await cb.answer()
@@ -371,7 +371,8 @@ async def view_bookings_months(cb: CallbackQuery):
     for ym in sorted(months.keys()):
         y, m = ym.split("-")
         kb.button(text=f"{MONTH_NAMES[m]} {y}", callback_data=f"bkg_month:{ym}")
-    kb.adjust(1); kb.button(text="⬅️ В главное меню", callback_data="view_main")
+    kb.adjust(1)  # 👈 Месяцы строго по 1 в ряд
+    kb.row(InlineKeyboardButton(text="⬅️ В главное меню", callback_data="view_main"))  # 👈 Назад 1 в ряд под всеми
     try: await cb.message.edit_text(txt, reply_markup=kb.as_markup())
     except: await cb.message.answer(txt, reply_markup=kb.as_markup())
     await cb.answer()
@@ -382,8 +383,10 @@ async def view_bookings_days(cb: CallbackQuery):
     active = await _get_active_bookings(cb.from_user.id)
     days = {slots[0].date for _, slots in active if slots[0].date[:7] == ym}
     txt, kb = "📅 **Выберите день:**", InlineKeyboardBuilder()
-    for d in sorted(days): kb.button(text=format_date_display(d), callback_data=f"bkg_date:{d}")
-    kb.adjust(1); kb.button(text="⬅️ К месяцам", callback_data="view_bookings")
+    for d in sorted(days):
+        kb.button(text=format_date_display(d), callback_data=f"bkg_date:{d}")
+    kb.adjust(2)  # 👈 Дни строго по 2 в ряд
+    kb.row(InlineKeyboardButton(text="⬅️ К месяцам", callback_data="view_bookings"))  # 👈 Назад 1 в ряд под всеми
     try: await cb.message.edit_text(txt, reply_markup=kb.as_markup())
     except: await cb.message.answer(txt, reply_markup=kb.as_markup())
     await cb.answer()
@@ -394,7 +397,7 @@ async def view_bookings_day_details(cb: CallbackQuery):
     active = await _get_active_bookings(cb.from_user.id)
     day_bookings = [(b, sl) for b, sl in active if sl[0].date == date_str]
     if not day_bookings:
-        kb = InlineKeyboardBuilder().button(text="⬅️ К дням", callback_data=f"bkg_month:{date_str[:7]}")
+        kb = InlineKeyboardBuilder().row(InlineKeyboardButton(text="⬅️ К дням", callback_data=f"bkg_month:{date_str[:7]}"))
         try: await cb.message.edit_text("📭 На этот день записей нет.", reply_markup=kb.as_markup())
         except: await cb.message.answer("📭 На этот день записей нет.", reply_markup=kb.as_markup())
         return await cb.answer()
@@ -407,7 +410,8 @@ async def view_bookings_day_details(cb: CallbackQuery):
         times = " | ".join(f"{sl.start_time}-{sl.end_time}" for sl in slots)
         txt += f"🆔 #{b.id}\n⏰ {times}\n💰 {int(b.total_price)}₽\nАдминистратор: `{admin_id}`"
         kb.button(text=f"❌ Отменить #{b.id}", callback_data=f"cancel_select:{b.id}")
-    kb.row(InlineKeyboardButton(text="⬅️ К дням", callback_data=f"bkg_month:{date_str[:7]}"))
+    kb.adjust(1)  # Кнопки отмены по 1 в ряд
+    kb.row(InlineKeyboardButton(text="⬅️ К дням", callback_data=f"bkg_month:{date_str[:7]}"))  # 👈 Назад 1 в ряд под всеми
     try: await cb.message.edit_text(txt, reply_markup=kb.as_markup())
     except: await cb.message.answer(txt, reply_markup=kb.as_markup())
     await cb.answer()
